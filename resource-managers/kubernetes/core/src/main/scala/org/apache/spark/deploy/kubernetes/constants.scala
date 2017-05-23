@@ -94,7 +94,7 @@ package object constants {
   private[spark] val MEMORY_OVERHEAD_MIN = 384L
 
   // TPR
-  private[spark] val TPR_API_GROUP = "apache.io"
+  private[spark] val TPR_API_GROUP = "apache.org"
   private[spark] val TPR_API_VERSION = "v1"
   private[spark] val TPR_KIND = "SparkJob"
 }
