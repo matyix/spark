@@ -16,23 +16,35 @@
  */
 package org.apache.spark.deploy.kubernetes.tpr
 
-import java.util.concurrent.{ThreadPoolExecutor, TimeUnit}
+import java.io.IOException
+import java.util.concurrent.ThreadPoolExecutor
+
+import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.{blocking, Future, Promise}
 
 import io.fabric8.kubernetes.client.{BaseClient, KubernetesClient}
 import okhttp3.{HttpUrl, MediaType, OkHttpClient, Request, RequestBody, Response}
-import okio.{Buffer, BufferedSource}
 import org.json4s.{DefaultFormats, Formats}
 import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods.{compact, parse, pretty, render}
 import org.json4s.jackson.Serialization.{read, write}
-import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.{blocking, Future, Promise}
-import scala.util.control.Breaks.{break, breakable}
 
 import org.apache.spark.deploy.kubernetes.constants._
 import org.apache.spark.internal.Logging
 import org.apache.spark.SparkException
+import org.apache.spark.deploy.kubernetes.tpr.JobState.JobState
 import org.apache.spark.util.ThreadUtils
+
+/**
+ * This trait contains currently acceptable operations on the SparkJob Resource
+ * CRUD
+ */
+private[spark] trait sparkJobResourceController {
+  def createJobObject(name: String, status: Status): Unit
+  def deleteJobObject(tprObjectName: String): Unit
+  def getJobObject(name: String): SparkJobState
+  def updateJobObject(jobResourcePatches: Seq[JobResourcePatch]): Unit
+}
 
 private[spark] case class Metadata(name: String,
     uid: Option[String] = None,
@@ -42,73 +54,111 @@ private[spark] case class Metadata(name: String,
 private[spark] case class SparkJobState(apiVersion: String,
     kind: String,
     metadata: Metadata,
-    status: Map[String, Any])
+    status: Status)
+
+private[spark] case class Status(creationTimeStamp: String,
+    completionTimeStamp: String,
+    sparkDriver: String,
+    driverImage: String,
+    executorImage: String,
+    jobState: JobState,
+    desiredExecutors: Int,
+    currentExecutors: Int,
+    driverUi: String)
 
 private[spark] case class WatchObject(`type`: String, `object`: SparkJobState)
 
+private[spark] case class JobResourcePatch(name: String, value: Any, fieldPath: String)
+
 /**
+ * Prereq - This assumes the kubernetes API has been extended using a TPR of name: Spark-job
+ * See conf/kubernetes-custom-resource.yaml for a model
+ *
  * CRUD + Watch Operations on SparkJob Resource
  *
  * This class contains all CRUD+Watch implementations performed
  * on the SparkJob Resource used to expose the state of a spark job
  * in kubernetes (visible via kubectl or through the k8s dashboard).
- *
- *
  */
-private[spark] class TPRCrudCalls(k8sClient: KubernetesClient,
-    kubeToken: Option[String] = None) extends Logging {
-  private val kubeMaster: String = k8sClient.getMasterUrl().toString
-
-  implicit val formats: Formats = DefaultFormats + JobStateSerDe
-
+private[spark] class sparkJobResourceControllerImpl(k8sClient: KubernetesClient)
+    extends Logging with sparkJobResourceController {
+  private val kubeMaster = k8sClient.getMasterUrl.toString
   private val httpClient: OkHttpClient =
     extractHttpClientFromK8sClient(k8sClient.asInstanceOf[BaseClient])
+  private val namespace = k8sClient.getNamespace
 
-  private val namespace: String = k8sClient.getNamespace
-  private var watchSource: BufferedSource = _
-  private lazy val buffer = new Buffer()
+  private implicit val formats: Formats = DefaultFormats + JobStateSerDe
   private implicit val ec: ThreadPoolExecutor = ThreadUtils
     .newDaemonCachedThreadPool("tpr-watcher-pool")
 
-  def createJobObject(name: String, keyValuePairs: Map[String, Any]): Unit = {
+  /**
+   * This method creates a resource of kind "SparkJob"
+   * @return Unit
+   * @throws IOException Due to failure from execute call
+   * @throws SparkException when POST request is unsuccessful
+   */
+  override def createJobObject(name: String, status: Status): Unit = {
     val resourceObject =
-      SparkJobState(s"$TPR_API_GROUP/$TPR_API_VERSION", TPR_KIND, Metadata(name), keyValuePairs)
+      SparkJobState(s"$TPR_API_GROUP/$TPR_API_VERSION", TPR_KIND, Metadata(name), status)
     val payload = parse(write(resourceObject))
-
     val requestBody = RequestBody
       .create(MediaType.parse("application/json"), compact(render(payload)))
-
-    val requestSegments = Seq(
+    val requestPathSegments = Seq(
       "apis", TPR_API_GROUP, TPR_API_VERSION, "namespaces", namespace, "sparkjobs")
-    val url = generateHttpUrl(requestSegments)
-
-    val request = completeRequest(new Request.Builder()
+    val url = generateHttpUrl(requestPathSegments)
+    val request = new Request.Builder()
       .post(requestBody)
-      .url(url))
+      .url(url)
+      .build()
 
     logDebug(s"Create SparkJobResource Request: $request")
-    val response = httpClient.newCall(request).execute()
+    var response: Response = null
+    try {
+      response = httpClient.newCall(request).execute()
+    } catch {
+      case x: IOException =>
+        val msg =
+          s"Failed to post resource $name. ${x.getMessage}. ${compact(render(payload))}"
+        logError(msg)
+        response.close()
+        throw new SparkException(msg)
+    }
     completeRequestWithExceptionIfNotSuccessful(
       "post",
       response,
       Option(Seq(name, response.toString, compact(render(payload)))))
-
-    response.body().close()
     logDebug(s"Successfully posted resource $name: " +
       s"${pretty(render(parse(write(resourceObject))))}")
+    response.body().close()
   }
 
-  def deleteJobObject(tprObjectName: String): Unit = {
-    val requestSegments = Seq(
+  /**
+   * This method deletes a resource of kind "SparkJob" with the specified name
+   * @return Unit
+   * @throws IOException Due to failure from execute call
+   * @throws SparkException when DELETE request is unsuccessful
+   */
+  override def deleteJobObject(tprObjectName: String): Unit = {
+    val requestPathSegments = Seq(
       "apis", TPR_API_GROUP, TPR_API_VERSION, "namespaces", namespace, "sparkjobs", tprObjectName)
-    val url = generateHttpUrl(requestSegments)
-
-    val request = completeRequest(new Request.Builder()
+    val url = generateHttpUrl(requestPathSegments)
+    val request = new Request.Builder()
       .delete()
-      .url(url))
+      .url(url)
+      .build()
 
     logDebug(s"Delete Request: $request")
-    val response = httpClient.newCall(request).execute()
+    var response: Response = null
+    try {
+      response = httpClient.newCall(request).execute()
+    } catch {
+      case x: IOException =>
+        val msg =
+          s"Failed to delete resource. ${x.getMessage}."
+        logError(msg)
+        response.close()
+        throw new SparkException(msg)
+    }
     completeRequestWithExceptionIfNotSuccessful(
       "delete",
       response,
@@ -118,17 +168,33 @@ private[spark] class TPRCrudCalls(k8sClient: KubernetesClient,
     logInfo(s"Successfully deleted resource $tprObjectName")
   }
 
-  def getJobObject(name: String): SparkJobState = {
-    val requestSegments = Seq(
+  /**
+   * This method GETS a resource of kind "SparkJob" with the given name
+   * @return SparkJobState
+   * @throws IOException Due to failure from execute call
+   * @throws SparkException when GET request is unsuccessful
+   */
+  override def getJobObject(name: String): SparkJobState = {
+    val requestPathSegments = Seq(
       "apis", TPR_API_GROUP, TPR_API_VERSION, "namespaces", namespace, "sparkjobs", name)
-    val url = generateHttpUrl(requestSegments)
-
-    val request = completeRequest(new Request.Builder()
+    val url = generateHttpUrl(requestPathSegments)
+    val request = new Request.Builder()
       .get()
-      .url(url))
+      .url(url)
+      .build()
 
     logDebug(s"Get Request: $request")
-    val response = httpClient.newCall(request).execute()
+    var response: Response = null
+    try {
+      response = httpClient.newCall(request).execute()
+    } catch {
+      case x: IOException =>
+        val msg =
+          s"Failed to get resource $name. ${x.getMessage}."
+        logError(msg)
+        response.close()
+        throw new SparkException(msg)
+    }
     completeRequestWithExceptionIfNotSuccessful(
       "get",
       response,
@@ -139,110 +205,51 @@ private[spark] class TPRCrudCalls(k8sClient: KubernetesClient,
     read[SparkJobState](response.body().string())
   }
 
-  def updateJobObject(name: String, value: String, fieldPath: String): Unit = {
-    val payload = List(
-      ("op" -> "replace") ~ ("path" -> fieldPath) ~ ("value" -> value))
+  /**
+   * This method Patches in Batch or singly a resource of kind "SparkJob" with the specified name
+   * @return Unit
+   * @throws IOException Due to failure from execute call
+   * @throws SparkException when PATCH request is unsuccessful
+   */
+  override def updateJobObject(jobResourcePatches: Seq[JobResourcePatch]): Unit = {
+    val payload = jobResourcePatches map { jobResourcePatch =>
+        ("op" -> "replace") ~
+          ("path" -> jobResourcePatch.fieldPath) ~
+          ("value" -> jobResourcePatch.value.toString)
+    }
     val requestBody =
       RequestBody.create(
         MediaType.parse("application/json-patch+json"),
         compact(render(payload)))
-
-    val requestSegments = Seq(
-      "apis", TPR_API_GROUP, TPR_API_VERSION, "namespaces", namespace, "sparkjobs", name)
-    val url = generateHttpUrl(requestSegments)
-
-    val request = completeRequest(new Request.Builder()
+    val requestPathSegments = Seq(
+      "apis", TPR_API_GROUP, TPR_API_VERSION, "namespaces",
+      namespace, "sparkjobs", jobResourcePatches.head.name)
+    val url = generateHttpUrl(requestPathSegments)
+    val request = new Request.Builder()
       .patch(requestBody)
-      .url(url))
+      .url(url)
+      .build()
 
     logDebug(s"Update Request: $request")
-    val response = httpClient.newCall(request).execute()
+    var response: Response = null
+    try {
+      response = httpClient.newCall(request).execute()
+    } catch {
+      case x: IOException =>
+        val msg =
+          s"Failed to get resource ${jobResourcePatches.head.name}. ${x.getMessage}."
+        logError(msg)
+        response.close()
+        throw new SparkException(msg)
+    }
     completeRequestWithExceptionIfNotSuccessful(
       "patch",
       response,
-      Option(Seq(name, response.message(), compact(render(payload))))
+      Option(Seq(jobResourcePatches.head.name, response.message(), compact(render(payload))))
     )
 
     response.body().close()
-    logDebug(s"Successfully patched resource $name.")
-  }
-
-/**
- * This method has an helper method that blocks to watch the object.
- * The future is completed on a Delete event or source exhaustion.
- * This method also relies on the assumption of one sparkjob per namespace
- */
-  def watchJobObject(): Future[WatchObject] = {
-    val watchClient = httpClient.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build()
-    val requestSegments = Seq(
-      "apis", TPR_API_GROUP, TPR_API_VERSION, "namespaces", namespace, "sparkjobs")
-    val url = generateHttpUrl(requestSegments, Seq(("watch", "true")))
-
-    val request = completeRequest(new Request.Builder()
-      .get()
-      .url(url))
-
-    logDebug(s"Watch Request: $request")
-    val resp = watchClient.newCall(request).execute()
-    completeRequestWithExceptionIfNotSuccessful(
-      "start watch on",
-      resp,
-      Option(Seq(resp.code().toString, resp.message())))
-
-    logInfo(s"Starting watch on jobResource")
-    watchJobObjectUtil(resp)
-  }
-
-/**
- * This method has a blocking call - wait on SSE - inside it.
- * However it is sent off in a new thread
- */
-  private def watchJobObjectUtil(response: Response): Future[WatchObject] = {
-    @volatile var wo: WatchObject = null
-    watchSource = response.body().source()
-    executeBlocking {
-      breakable {
-        // This will block until there are bytes to read or the source is exhausted.
-        while (!watchSource.exhausted()) {
-          watchSource.read(buffer, 8192) match {
-            case -1 =>
-              cleanUpListener(watchSource, buffer)
-              throw new SparkException("Source is exhausted and object state is unknown")
-            case _ =>
-              wo = read[WatchObject](buffer.readUtf8())
-              wo match {
-                case WatchObject("DELETED", w) =>
-                  logInfo(s"${w.metadata.name} has been deleted")
-                  cleanUpListener(watchSource, buffer)
-                case WatchObject(e, _) => logInfo(s"$e event. Still watching")
-              }
-          }
-        }
-      }
-      wo
-    }
-  }
-
-  private def cleanUpListener(source: BufferedSource, buffer: Buffer): Unit = {
-    buffer.close()
-    source.close()
-    break()
-  }
-
-  // Serves as a way to interrupt to the watcher thread.
-  // This closes the source the watcher is reading from and as a result triggers promise completion
-  def stopWatcher(): Unit = {
-    if (watchSource != null) {
-      buffer.close()
-      watchSource.close()
-    }
-  }
-
-  private def completeRequest(partialReq: Request.Builder): Request = {
-    kubeToken match {
-      case Some(tok) => partialReq.addHeader("Authorization", s"Bearer $tok").build()
-      case None => partialReq.build()
-    }
+    logDebug(s"Successfully patched resource ${jobResourcePatches.head.name}.")
   }
 
   private def generateHttpUrl(urlSegments: Seq[String],

@@ -17,7 +17,8 @@
 package org.apache.spark.deploy.kubernetes.submit
 
 import java.io.File
-import java.util.{Calendar, Collections}
+import java.text.SimpleDateFormat
+import java.util.{Collections, Date}
 
 import io.fabric8.kubernetes.api.model.{ContainerBuilder, EnvVarBuilder, OwnerReferenceBuilder, PodBuilder}
 import scala.collection.JavaConverters._
@@ -27,7 +28,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.deploy.kubernetes.ConfigurationUtils
 import org.apache.spark.deploy.kubernetes.config._
 import org.apache.spark.deploy.kubernetes.constants._
-import org.apache.spark.deploy.kubernetes.tpr.{JobState, TPRCrudCalls}
+import org.apache.spark.deploy.kubernetes.tpr.{sparkJobResourceController, sparkJobResourceControllerImpl, JobState, Status}
 import org.apache.spark.deploy.rest.kubernetes.ResourceStagingServerSslOptionsProviderImpl
 import org.apache.spark.internal.Logging
 import org.apache.spark.launcher.SparkLauncher
@@ -55,7 +56,8 @@ private[spark] class Client(
     kubernetesClientProvider: SubmissionKubernetesClientProvider,
     initContainerComponentsProvider: DriverInitContainerComponentsProvider,
     kubernetesCredentialsMounterProvider: DriverPodKubernetesCredentialsMounterProvider,
-    loggingPodStatusWatcher: LoggingPodStatusWatcher)
+    loggingPodStatusWatcher: LoggingPodStatusWatcher,
+    sparkJobResourceController: sparkJobResourceController)
     extends Logging {
 
   private val kubernetesDriverPodName = sparkConf.get(KUBERNETES_DRIVER_POD_NAME)
@@ -74,30 +76,30 @@ private[spark] class Client(
     org.apache.spark.internal.config.DRIVER_CLASS_PATH)
   private val driverJavaOptions = sparkConf.get(
     org.apache.spark.internal.config.DRIVER_JAVA_OPTIONS)
+  private val resourceTimeFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.S'Z'")
 
   // create resource of kind - SparkJob representing the deployed spark app
-  private val sparkJobController = new TPRCrudCalls(kubernetesClientProvider.get)
-  private val statusMap = Map(
-    STATUS_CREATION_TIMESTAMP -> Calendar.getInstance().getTime().toString(),
-    STATUS_COMPLETION_TIMESTAMP -> STATUS_NOT_AVAILABLE,
-    STATUS_DRIVER -> kubernetesDriverPodName,
-    STATUS_DRIVER_IMAGE -> driverDockerImage,
-    STATUS_EXECUTOR_IMAGE -> sparkConf.get(EXECUTOR_DOCKER_IMAGE),
-    STATUS_JOB_STATE -> JobState.QUEUED,
-    STATUS_DESIRED_EXECUTORS -> sparkConf.getInt("spark.executor.instances", 1),
-    STATUS_CURRENT_EXECUTORS -> 0,
-    STATUS_DRIVER_UI -> STATUS_PENDING
+  private val status = Status(
+    creationTimeStamp = resourceTimeFormat.format(new Date()),
+    completionTimeStamp = STATUS_NOT_AVAILABLE,
+    sparkDriver = kubernetesDriverPodName,
+    driverImage = driverDockerImage,
+    executorImage = sparkConf.get(EXECUTOR_DOCKER_IMAGE),
+    jobState = JobState.QUEUED,
+    desiredExecutors = sparkConf.getInt("spark.executor.instances", 1),
+    currentExecutors = 0,
+    driverUi = STATUS_PENDING
   )
 
   // Failure might be due to TPR inexistence or maybe we're stuck in the 10 minute lag
   // TODO: in the latter case we can attempt a retry depending on the rc
   // This also assumes that once we fail at creation, we won't bother trying
   // anything on the resource for the lifetime of the app
-  Try(sparkJobController.createJobObject(kubernetesAppId, statusMap)) match {
-    case Success(_) => sparkConf.set("spark.kubernetes.jobResourceSet", "true")
-      sparkConf.set("spark.kubernetes.jobResourceName", kubernetesAppId)
-    case Failure(_: SparkException) => // if e.getMessage startsWith "40" =>
-      sparkConf.set("spark.kubernetes.jobResourceSet", "false")
+  Try(sparkJobResourceController.createJobObject(kubernetesAppId, status)) match {
+    case Success(_) =>
+      sparkConf.set(KUBERNETES_JOB_RESOURCE_ENABLED, true)
+      sparkConf.set(KUBERNETES_JOB_RESOURCE_NAME, kubernetesAppId)
+    case Failure(_) =>
   }
 
   def run(): Unit = {
@@ -304,6 +306,8 @@ private[spark] object Client {
     val waitForAppCompletion = sparkConf.get(WAIT_FOR_APP_COMPLETION)
     val loggingInterval = Option(sparkConf.get(REPORT_INTERVAL)).filter( _ => waitForAppCompletion)
     val loggingPodStatusWatcher = new LoggingPodStatusWatcherImpl(kubernetesAppId, loggingInterval)
+    val sparkJobResourceController = new sparkJobResourceControllerImpl(
+      kubernetesClientProvider.get)
     new Client(
       appName,
       kubernetesAppId,
@@ -316,6 +320,7 @@ private[spark] object Client {
       kubernetesClientProvider,
       initContainerComponentsProvider,
       kubernetesCredentialsMounterProvider,
-      loggingPodStatusWatcher).run()
+      loggingPodStatusWatcher,
+      sparkJobResourceController).run()
   }
 }
