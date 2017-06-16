@@ -47,11 +47,14 @@ private[spark] class Client(
     appName: String,
     kubernetesResourceNamePrefix: String,
     kubernetesAppId: String,
+    mainAppResource: String,
+    isPython: Boolean,
     mainClass: String,
     sparkConf: SparkConf,
     appArgs: Array[String],
     sparkJars: Seq[String],
     sparkFiles: Seq[String],
+    pySparkFiles: List[String],
     waitForAppCompletion: Boolean,
     kubernetesClient: KubernetesClient,
     initContainerComponentsProvider: DriverInitContainerComponentsProvider,
@@ -83,7 +86,14 @@ private[spark] class Client(
   def run(): Unit = {
     validateNoDuplicateFileNames(sparkJars)
     validateNoDuplicateFileNames(sparkFiles)
-
+    if (isPython) {validateNoDuplicateFileNames(pySparkFiles)}
+    val arguments = if (isPython) pySparkFiles match {
+      case Nil => appArgs
+      case a::b => a match {
+        case _ if a==mainAppResource && b==Nil => appArgs
+        case _ => appArgs.drop(1)
+      }
+    } else appArgs
     val driverCustomLabels = ConfigurationUtils.combinePrefixedKeyValuePairsWithDeprecatedConf(
       sparkConf,
       KUBERNETES_DRIVER_LABEL_PREFIX,
@@ -135,7 +145,7 @@ private[spark] class Client(
         .endEnv()
       .addNewEnv()
         .withName(ENV_DRIVER_ARGS)
-        .withValue(appArgs.mkString(" "))
+        .withValue(arguments.mkString(" "))
         .endEnv()
       .withNewResources()
         .addToRequests("cpu", driverCpuQuantity)
@@ -204,7 +214,7 @@ private[spark] class Client(
     val resolvedDriverJavaOpts = resolvedSparkConf.getAll.map {
       case (confKey, confValue) => s"-D$confKey=$confValue"
     }.mkString(" ") + driverJavaOptions.map(" " + _).getOrElse("")
-    val resolvedDriverPod = podWithInitContainerAndMountedCreds.editSpec()
+    val resolvedDriverPodBuilder = podWithInitContainerAndMountedCreds.editSpec()
       .editMatchingContainer(new ContainerNameEqualityPredicate(driverContainer.getName))
         .addNewEnv()
           .withName(ENV_MOUNTED_CLASSPATH)
@@ -216,7 +226,15 @@ private[spark] class Client(
           .endEnv()
         .endContainer()
       .endSpec()
-      .build()
+    val resolvedDriverPod = if (!isPython) {
+      resolvedDriverPodBuilder.build()
+    } else {
+      initContainerComponentsProvider
+        .provideDriverPodFileMounter()
+        .addPySparkFiles(
+          mainAppResource, pySparkFiles, driverContainer.getName, resolvedDriverPodBuilder)
+        .build()
+    }
     Utils.tryWithResource(
         kubernetesClient
             .pods()
@@ -266,7 +284,7 @@ private[spark] class Client(
   }
 }
 
-private[spark] object Client {
+private[spark] object Client{
   def main(args: Array[String]): Unit = {
     val sparkConf = new SparkConf(true)
     val mainAppResource = args(0)
@@ -274,22 +292,28 @@ private[spark] object Client {
     val appArgs = args.drop(2)
     run(sparkConf, mainAppResource, mainClass, appArgs)
   }
-
   def run(
       sparkConf: SparkConf,
       mainAppResource: String,
       mainClass: String,
       appArgs: Array[String]): Unit = {
-    val sparkJars = sparkConf.getOption("spark.jars")
+    val isPython = mainAppResource.endsWith(".py")
+    val sparkJars = if (isPython) Array.empty[String] else {
+      sparkConf.getOption("spark.jars")
       .map(_.split(","))
       .getOrElse(Array.empty[String]) ++
       Option(mainAppResource)
         .filterNot(_ == SparkLauncher.NO_RESOURCE)
-        .toSeq
+        .toSeq }
     val launchTime = System.currentTimeMillis
     val sparkFiles = sparkConf.getOption("spark.files")
       .map(_.split(","))
       .getOrElse(Array.empty[String])
+    val pySparkFiles: Array[String] = if (isPython) {
+      appArgs(0) match {
+        case null => Array(mainAppResource)
+        case _ => mainAppResource +: appArgs(0).split(",")
+      }} else {Array.empty[String]}
     val appName = sparkConf.getOption("spark.app.name").getOrElse("spark")
     // The resource name prefix is derived from the application name, making it easy to connect the
     // names of the Kubernetes resources from e.g. Kubectl or the Kubernetes dashboard to the
@@ -302,12 +326,17 @@ private[spark] object Client {
     val namespace = sparkConf.get(KUBERNETES_NAMESPACE)
     val master = resolveK8sMaster(sparkConf.get("spark.master"))
     val sslOptionsProvider = new ResourceStagingServerSslOptionsProviderImpl(sparkConf)
+    // No reason to distribute python files that are locally baked into Docker image
+    def filterByFile(pFiles: Array[String]) : Array[String] = {
+      val LocalPattern = "(local://)(.*)"
+      pFiles.filter(fi => !(fi matches LocalPattern))
+    }
     val initContainerComponentsProvider = new DriverInitContainerComponentsProviderImpl(
         sparkConf,
         kubernetesResourceNamePrefix,
         namespace,
         sparkJars,
-        sparkFiles,
+        sparkFiles ++ filterByFile(pySparkFiles),
         sslOptionsProvider.getSslOptions)
     Utils.tryWithResource(SparkKubernetesClientFactory.createKubernetesClient(
         master,
@@ -328,11 +357,14 @@ private[spark] object Client {
           appName,
           kubernetesResourceNamePrefix,
           kubernetesAppId,
+          mainAppResource,
+          isPython,
           mainClass,
           sparkConf,
           appArgs,
           sparkJars,
           sparkFiles,
+          pySparkFiles.toList,
           waitForAppCompletion,
           kubernetesClient,
           initContainerComponentsProvider,

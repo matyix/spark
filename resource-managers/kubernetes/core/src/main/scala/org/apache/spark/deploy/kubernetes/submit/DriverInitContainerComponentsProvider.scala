@@ -41,6 +41,8 @@ private[spark] trait DriverInitContainerComponentsProvider {
       maybeSubmittedResourceSecrets: Option[SubmittedResourceSecrets])
       : Option[SubmittedDependencySecretBuilder]
   def provideInitContainerBootstrap(): SparkPodInitContainerBootstrap
+  def provideDriverPodFileMounter(): DriverPodKubernetesFileMounter
+
 }
 
 private[spark] class DriverInitContainerComponentsProviderImpl(
@@ -201,5 +203,8 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
         configMapName,
         configMapKey,
         resourceStagingServerSecretPlugin)
+  }
+  override def provideDriverPodFileMounter(): DriverPodKubernetesFileMounter = {
+    new DriverPodKubernetesFileMounterImpl(filesDownloadPath)
   }
 }

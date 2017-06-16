@@ -220,6 +220,26 @@
               </resources>
             </configuration>
           </execution>
+          <execution>
+              <id>copy-integration-python</id>
+              <phase>pre-integration-test</phase>
+              <goals>
+                  <goal>copy-resources</goal>
+              </goals>
+              <configuration>
+                  <outputDirectory>${project.build.directory}/docker/python</outputDirectory>
+                  <resources>
+                      <resource>
+                          <directory>${project.parent.basedir}/python</directory>
+                          <filtering>true</filtering>
+                          <excludes>
+                            <exclude>${project.parent.basedir}/python/.egg</exclude>
+                            <exclude>${project.parent.basedir}/python/dist</exclude>
+                          </excludes>
+                      </resource>
+                  </resources>
+              </configuration>
+          </execution>
         </executions>
       </plugin>
       <plugin>
