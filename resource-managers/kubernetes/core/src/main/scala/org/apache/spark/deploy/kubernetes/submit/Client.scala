@@ -284,7 +284,7 @@ private[spark] class Client(
   }
 }
 
-private[spark] object Client extends Logging{
+private[spark] object Client {
   def main(args: Array[String]): Unit = {
     val sparkConf = new SparkConf(true)
     val mainAppResource = args(0)
