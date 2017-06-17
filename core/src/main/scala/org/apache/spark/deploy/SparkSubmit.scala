@@ -624,8 +624,7 @@ object SparkSubmit {
         childArgs += args.primaryResource
         childArgs += "org.apache.spark.deploy.PythonRunner"
         childArgs += args.pyFiles
-      }
-      else {
+      } else {
         childArgs += args.primaryResource
         childArgs += args.mainClass
       }

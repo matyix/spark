@@ -284,7 +284,7 @@ private[spark] class Client(
   }
 }
 
-private[spark] object Client{
+private[spark] object Client extends Logging{
   def main(args: Array[String]): Unit = {
     val sparkConf = new SparkConf(true)
     val mainAppResource = args(0)
@@ -310,10 +310,10 @@ private[spark] object Client{
       .map(_.split(","))
       .getOrElse(Array.empty[String])
     val pySparkFiles: Array[String] = if (isPython) {
-      appArgs(0) match {
-        case null => Array(mainAppResource)
-        case _ => mainAppResource +: appArgs(0).split(",")
-      }} else {Array.empty[String]}
+      Option(appArgs(0)) match {
+        case None => Array(mainAppResource)
+        case Some(a) => mainAppResource +: a.split(",") }
+      } else { Array.empty[String] }
     val appName = sparkConf.getOption("spark.app.name").getOrElse("spark")
     // The resource name prefix is derived from the application name, making it easy to connect the
     // names of the Kubernetes resources from e.g. Kubectl or the Kubernetes dashboard to the
