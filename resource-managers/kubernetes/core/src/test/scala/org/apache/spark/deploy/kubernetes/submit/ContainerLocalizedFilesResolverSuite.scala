@@ -33,10 +33,11 @@ class ContainerLocalizedFilesResolverSuite extends SparkFunSuite {
     "hdfs://localhost:9000/app/files/file1.py",
     "file:///app/files/file2.py",
     "local:///app/files/file3.py",
-    "http://app/files/file4.py")
+    "http://app/files/file4.py",
+    "file:///app/files/file5.py")
   private val JARS_DOWNLOAD_PATH = "/var/data/spark-jars"
   private val FILES_DOWNLOAD_PATH = "/var/data/spark-files"
-  private val PYSPARK_PRIMARY_FILE = "file:///app/files/file4.py"
+  private val PYSPARK_PRIMARY_FILE = "file:///app/files/file5.py"
   private val localizedFilesResolver = new ContainerLocalizedFilesResolverImpl(
     SPARK_JARS,
     SPARK_FILES,
@@ -79,13 +80,14 @@ class ContainerLocalizedFilesResolverSuite extends SparkFunSuite {
     val expectedPySparkFiles = Seq(
       "hdfs://localhost:9000/app/files/file1.py",
       s"$FILES_DOWNLOAD_PATH/file2.py",
-      "local:///app/files/file3.py")
+      "local:///app/files/file3.py",
+      "http://app/files/file4.py")
     assert(resolvedPySparkFiles === expectedPySparkFiles)
   }
   test("Submitted PySpark Primary resource should resolve to the download path.") {
     val resolvedPySparkPrimary =
       localizedFilesResolver.resolvePrimaryResourceFile()
-    val expectedPySparkPrimary = s"$FILES_DOWNLOAD_PATH/file4.py"
+    val expectedPySparkPrimary = s"$FILES_DOWNLOAD_PATH/file5.py"
     assert(resolvedPySparkPrimary === expectedPySparkPrimary)
   }
 }
