@@ -171,7 +171,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
             .endMetadata()
         }
       })
-    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver(MAIN_CLASS))
+    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver(""))
       .thenReturn(containerLocalizedFilesResolver)
     when(initContainerComponentsProvider.provideExecutorInitContainerConfiguration())
       .thenReturn(executorInitContainerConfiguration)
