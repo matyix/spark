@@ -33,7 +33,8 @@ private[spark] trait DriverInitContainerComponentsProvider {
   def provideInitContainerConfigMapBuilder(
       maybeSubmittedResourceIds: Option[SubmittedResourceIds])
       : SparkInitContainerConfigMapBuilder
-  def provideContainerLocalizedFilesResolver(): ContainerLocalizedFilesResolver
+  def provideContainerLocalizedFilesResolver(
+      mainAppResource: String) : ContainerLocalizedFilesResolver
   def provideExecutorInitContainerConfiguration(): ExecutorInitContainerConfiguration
   def provideInitContainerSubmittedDependencyUploader(
       driverPodLabels: Map[String, String]): Option[SubmittedDependencyUploader]
@@ -51,6 +52,7 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
       namespace: String,
       sparkJars: Seq[String],
       sparkFiles: Seq[String],
+      pySparkFiles: Seq[String],
       resourceStagingServerExternalSslOptions: SSLOptions)
     extends DriverInitContainerComponentsProvider {
 
@@ -106,6 +108,7 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
   private val initContainerImage = sparkConf.get(INIT_CONTAINER_DOCKER_IMAGE)
   private val dockerImagePullPolicy = sparkConf.get(DOCKER_IMAGE_PULL_POLICY)
   private val downloadTimeoutMinutes = sparkConf.get(INIT_CONTAINER_MOUNT_TIMEOUT)
+  private val pySparkSubmitted = KubernetesFileUtils.getOnlySubmitterLocalFiles(pySparkFiles)
 
   override def provideInitContainerConfigMapBuilder(
       maybeSubmittedResourceIds: Option[SubmittedResourceIds])
@@ -133,7 +136,7 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
     }
     new SparkInitContainerConfigMapBuilderImpl(
         sparkJars,
-        sparkFiles,
+        sparkFiles ++ pySparkSubmitted,
         jarsDownloadPath,
         filesDownloadPath,
         configMapName,
@@ -141,9 +144,10 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
         submittedDependencyConfigPlugin)
   }
 
-  override def provideContainerLocalizedFilesResolver(): ContainerLocalizedFilesResolver = {
+  override def provideContainerLocalizedFilesResolver(mainAppResource: String)
+    : ContainerLocalizedFilesResolver = {
     new ContainerLocalizedFilesResolverImpl(
-        sparkJars, sparkFiles, jarsDownloadPath, filesDownloadPath)
+        sparkJars, sparkFiles, pySparkFiles, mainAppResource, jarsDownloadPath, filesDownloadPath)
   }
 
   override def provideExecutorInitContainerConfiguration(): ExecutorInitContainerConfiguration = {
@@ -162,7 +166,7 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
           namespace,
           stagingServerUri,
           sparkJars,
-          sparkFiles,
+          sparkFiles ++ pySparkSubmitted,
           resourceStagingServerExternalSslOptions,
           RetrofitClientFactoryImpl)
     }
@@ -205,6 +209,6 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
         resourceStagingServerSecretPlugin)
   }
   override def provideDriverPodFileMounter(): DriverPodKubernetesFileMounter = {
-    new DriverPodKubernetesFileMounterImpl(filesDownloadPath)
+    new DriverPodKubernetesFileMounterImpl()
   }
 }

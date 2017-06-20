@@ -26,49 +26,30 @@ import org.apache.spark.deploy.kubernetes.constants._
   * environmental variables in the driver-pod.
   */
 private[spark] trait DriverPodKubernetesFileMounter {
-  def addPySparkFiles(mainAppResource: String, pythonFiles: List[String],
+  def addPySparkFiles(primaryFile: String, pySparkFiles: String,
     mainContainerName: String, originalPodSpec: PodBuilder) : PodBuilder
 }
 
-private[spark] class DriverPodKubernetesFileMounterImpl(filesDownloadPath: String)
+private[spark] class DriverPodKubernetesFileMounterImpl()
   extends DriverPodKubernetesFileMounter {
-  val LocalPattern = "(local://)(.*)".r
-  val FilePattern = "(file:/)(.*)".r
-  def getName(file: String, separatorChar: Char) : String = {
-    val index: Int = file.lastIndexOf(separatorChar)
-    file.substring(index + 1)
-  }
-  def fileLoc(file: String) : String = file match {
-    case "" => ""
-    case LocalPattern(_, file_name) => file_name
-    case FilePattern(_, file_name) => filesDownloadPath + "/" + getName(file_name, '/')
-    case _ => filesDownloadPath + "/" + getName(file, '/')
-  }
-  def pythonFileLocations(pFiles: List[String], mainAppResource: String) : String = {
-    def recFileLoc(file: List[String]): List[String] = file match {
-      case Nil => List.empty[String]
-      case a::b => a match {
-        case _ if a==mainAppResource => recFileLoc(b)
-        case _ => fileLoc(a) +: recFileLoc(b)
-      }
-  }
-    recFileLoc(pFiles).mkString(",")
-  }
-  override def addPySparkFiles(mainAppResource: String, pythonFiles: List[String],
-                               mainContainerName: String,
-                               originalPodSpec: PodBuilder): PodBuilder = {
+  override def addPySparkFiles(
+        primaryFile: String,
+        pySparkFiles: String,
+        mainContainerName: String,
+        originalPodSpec: PodBuilder): PodBuilder = {
+
     originalPodSpec
       .editSpec()
-      .editMatchingContainer(new ContainerNameEqualityPredicate(mainContainerName))
-      .addNewEnv()
-      .withName(ENV_PYSPARK_PRIMARY)
-      .withValue(fileLoc(mainAppResource))
-      .endEnv()
-      .addNewEnv()
-      .withName(ENV_PYSPARK_FILES)
-      .withValue(pythonFileLocations(pythonFiles, mainAppResource))
-      .endEnv()
-      .endContainer()
+        .editMatchingContainer(new ContainerNameEqualityPredicate(mainContainerName))
+          .addNewEnv()
+            .withName(ENV_PYSPARK_PRIMARY)
+            .withValue(primaryFile)
+          .endEnv()
+          .addNewEnv()
+            .withName(ENV_PYSPARK_FILES)
+            .withValue(pySparkFiles)
+          .endEnv()
+        .endContainer()
       .endSpec()
   }
 }

@@ -24,13 +24,19 @@ private[spark] trait ContainerLocalizedFilesResolver {
   def resolveSubmittedAndRemoteSparkJars(): Seq[String]
   def resolveSubmittedSparkJars(): Seq[String]
   def resolveSubmittedSparkFiles(): Seq[String]
+  def resolveSubmittedPySparkFiles(): Seq[String]
+  def resolvePrimaryResourceFile(): String
 }
 
 private[spark] class ContainerLocalizedFilesResolverImpl(
     sparkJars: Seq[String],
     sparkFiles: Seq[String],
+    pySparkFiles: Seq[String],
+    primaryPyFile: String,
     jarsDownloadPath: String,
-    filesDownloadPath: String) extends ContainerLocalizedFilesResolver {
+    filesDownloadPath: String
+    ) extends ContainerLocalizedFilesResolver {
+
 
   override def resolveSubmittedAndRemoteSparkJars(): Seq[String] = {
     sparkJars.map { jar =>
@@ -53,16 +59,33 @@ private[spark] class ContainerLocalizedFilesResolverImpl(
     resolveSubmittedFiles(sparkFiles, filesDownloadPath)
   }
 
-  private def resolveSubmittedFiles(files: Seq[String], downloadPath: String): Seq[String] = {
-    files.map { file =>
-      val fileUri = Utils.resolveURI(file)
-      Option(fileUri.getScheme).getOrElse("file") match {
-        case "file" =>
-          val fileName = new File(fileUri.getPath).getName
-          s"$downloadPath/$fileName"
-        case _ =>
-          file
-      }
+  override def resolveSubmittedPySparkFiles(): Seq[String] = {
+    def filterMainResource(x: String) = x match {
+      case `primaryPyFile` => None
+      case _ => Some(resolveFile(x, filesDownloadPath))
     }
+    pySparkFiles.flatMap(x => filterMainResource(x))
+  }
+
+  override def resolvePrimaryResourceFile(): String = {
+    Option(primaryPyFile) match {
+      case None => ""
+      case Some(p) => resolveFile(p, filesDownloadPath)
+    }
+  }
+
+  private def resolveFile(file: String, downloadPath: String) = {
+    val fileUri = Utils.resolveURI(file)
+    Option(fileUri.getScheme).getOrElse("file") match {
+      case "file" =>
+        val fileName = new File(fileUri.getPath).getName
+        s"$downloadPath/$fileName"
+      case _ =>
+        file
+    }
+  }
+
+  private def resolveSubmittedFiles(files: Seq[String], downloadPath: String): Seq[String] = {
+    files.map { file => resolveFile(file, downloadPath) }
   }
 }

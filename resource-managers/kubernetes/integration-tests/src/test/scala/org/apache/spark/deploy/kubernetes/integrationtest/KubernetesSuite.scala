@@ -342,8 +342,8 @@ private[spark] object KubernetesSuite {
   val SPARK_PI_MAIN_CLASS = "org.apache.spark.deploy.kubernetes" +
     ".integrationtest.jobs.SparkPiWithInfiniteWait"
   val PYSPARK_PI_MAIN_CLASS = "org.apache.spark.deploy.PythonRunner"
-  val PYSPARK_PI_CONTAINER_LOCAL_FILE_LOCATION = "local:///opt/spark/" +
-    "examples/src/main/python/pi.py"
+  val PYSPARK_PI_CONTAINER_LOCAL_FILE_LOCATION =
+    "local:///opt/spark/examples/src/main/python/pi.py"
   val PYSPARK_PI_SUBMITTER_LOCAL_FILE_LOCATION = "src/test/python/pi.py"
   val FILE_EXISTENCE_MAIN_CLASS = "org.apache.spark.deploy.kubernetes" +
     ".integrationtest.jobs.FileExistenceTest"

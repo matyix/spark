@@ -183,10 +183,12 @@ private[spark] class Client(
         .bootstrapInitContainerAndVolumes(driverContainer.getName, basePod)
 
     val containerLocalizedFilesResolver = initContainerComponentsProvider
-        .provideContainerLocalizedFilesResolver()
+        .provideContainerLocalizedFilesResolver(mainAppResource)
     val resolvedSparkJars = containerLocalizedFilesResolver.resolveSubmittedSparkJars()
     val resolvedSparkFiles = containerLocalizedFilesResolver.resolveSubmittedSparkFiles()
-
+    val resolvedPySparkFiles = containerLocalizedFilesResolver.resolveSubmittedPySparkFiles()
+    val resolvedPrimaryPySparkResource = if (!isPython) ""
+     else { containerLocalizedFilesResolver.resolvePrimaryResourceFile() }
     val executorInitContainerConfiguration = initContainerComponentsProvider
         .provideExecutorInitContainerConfiguration()
     val sparkConfWithExecutorInit = executorInitContainerConfiguration
@@ -232,7 +234,10 @@ private[spark] class Client(
       initContainerComponentsProvider
         .provideDriverPodFileMounter()
         .addPySparkFiles(
-          mainAppResource, pySparkFiles, driverContainer.getName, resolvedDriverPodBuilder)
+          resolvedPrimaryPySparkResource,
+          resolvedPySparkFiles.mkString(","),
+          driverContainer.getName,
+          resolvedDriverPodBuilder)
         .build()
     }
     Utils.tryWithResource(
@@ -298,13 +303,16 @@ private[spark] object Client {
       mainClass: String,
       appArgs: Array[String]): Unit = {
     val isPython = mainAppResource.endsWith(".py")
-    val sparkJars = if (isPython) Array.empty[String] else {
-      sparkConf.getOption("spark.jars")
-      .map(_.split(","))
-      .getOrElse(Array.empty[String]) ++
-      Option(mainAppResource)
+    // Since you might need jars for SQL UDFs in PySpark
+    def sparkJarFilter() : Seq[String] = isPython match {
+      case true => Seq.empty[String]
+      case false => Option(mainAppResource)
         .filterNot(_ == SparkLauncher.NO_RESOURCE)
-        .toSeq }
+        .toSeq
+    }
+    val sparkJars = sparkConf.getOption("spark.jars")
+      .map(_.split(","))
+      .getOrElse(Array.empty[String]) ++ sparkJarFilter()
     val launchTime = System.currentTimeMillis
     val sparkFiles = sparkConf.getOption("spark.files")
       .map(_.split(","))
@@ -326,17 +334,13 @@ private[spark] object Client {
     val namespace = sparkConf.get(KUBERNETES_NAMESPACE)
     val master = resolveK8sMaster(sparkConf.get("spark.master"))
     val sslOptionsProvider = new ResourceStagingServerSslOptionsProviderImpl(sparkConf)
-    // No reason to distribute python files that are locally baked into Docker image
-    def filterByFile(pFiles: Array[String]) : Array[String] = {
-      val LocalPattern = "(local://)(.*)"
-      pFiles.filter(fi => !(fi matches LocalPattern))
-    }
     val initContainerComponentsProvider = new DriverInitContainerComponentsProviderImpl(
         sparkConf,
         kubernetesResourceNamePrefix,
         namespace,
         sparkJars,
-        sparkFiles ++ filterByFile(pySparkFiles),
+        sparkFiles,
+        pySparkFiles,
         sslOptionsProvider.getSslOptions)
     Utils.tryWithResource(SparkKubernetesClientFactory.createKubernetesClient(
         master,

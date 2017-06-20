@@ -171,7 +171,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
             .endMetadata()
         }
       })
-    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver())
+    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver(MAIN_CLASS))
       .thenReturn(containerLocalizedFilesResolver)
     when(initContainerComponentsProvider.provideExecutorInitContainerConfiguration())
       .thenReturn(executorInitContainerConfiguration)
@@ -465,3 +465,5 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
     pod.getMetadata.getAnnotations.asScala == expectedAnnotations
   }
 }
+
+
