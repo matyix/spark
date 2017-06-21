@@ -23,6 +23,11 @@ import com.spotify.docker.client.{DefaultDockerClient, DockerCertificates, Loggi
 import org.apache.http.client.utils.URIBuilder
 import org.scalatest.concurrent.{Eventually, PatienceConfiguration}
 import org.scalatest.time.{Minutes, Seconds, Span}
+import scala.collection.JavaConverters._
+
+import org.apache.spark.SparkUserAppException
+import org.apache.spark.util.RedirectThread
+
 
 private[spark] class SparkDockerImageBuilder(private val dockerEnv: Map[String, String]) {
 
@@ -63,6 +68,16 @@ private[spark] class SparkDockerImageBuilder(private val dockerEnv: Map[String, 
 
   def buildSparkDockerImages(): Unit = {
     Eventually.eventually(TIMEOUT, INTERVAL) { dockerClient.ping() }
+    // Building Python distribution environment
+    val builder = new ProcessBuilder(
+      Seq("python", "setup.py", "sdist").asJava)
+    builder.directory(new java.io.File(s"$DOCKER_BUILD_PATH/python"))
+    val process = builder.start()
+    new RedirectThread(process.getInputStream, System.out, "redirect output").start()
+    val exitCode = process.waitFor()
+    if (exitCode != 0) {
+      throw new SparkUserAppException(exitCode)
+    }
     buildImage("spark-base", BASE_DOCKER_FILE)
     buildImage("spark-driver", DRIVER_DOCKER_FILE)
     buildImage("spark-driver-py", DRIVERPY_DOCKER_FILE)

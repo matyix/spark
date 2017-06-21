@@ -72,30 +72,31 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
     kubernetesTestComponents.deleteNamespace()
   }
 
-  /**
-    * These tests need to be run in an environment similair to the one provided
-    * by make_distribution. Further investigation is required
-    */
-//  test("Run PySpark Job on file from SUBMITTER") {
-//    assume(testBackend.name == MINIKUBE_TEST_BACKEND)
-//    launchStagingServer(SSLOptions(), None)
-//    sparkConf.set(DRIVER_DOCKER_IMAGE,
-//      System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
-//    sparkConf.set(EXECUTOR_DOCKER_IMAGE,
-//      System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
-//    runPySparkPiAndVerifyCompletion(
-//      PYSPARK_PI_SUBMITTER_LOCAL_FILE_LOCATION)
-//  }
-//  test("Run PySpark Job on file from CONTAINER") {
-//    assume(testBackend.name == MINIKUBE_TEST_BACKEND)
-//    // UPDATE SO THAT IT BUILDS FROM LOCAL DOCKER IMAGE
-//    sparkConf.set(DRIVER_DOCKER_IMAGE,
-//      System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
-//    sparkConf.set(EXECUTOR_DOCKER_IMAGE,
-//      System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
-//    runPySparkPiAndVerifyCompletion(
-//      PYSPARK_PI_CONTAINER_LOCAL_FILE_LOCATION)
-//  }
+  test("Run PySpark Job on file from SUBMITTER") {
+    assume(testBackend.name == MINIKUBE_TEST_BACKEND)
+
+    launchStagingServer(SSLOptions(), None)
+    sparkConf.set(DRIVER_DOCKER_IMAGE,
+      System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
+    sparkConf.set(EXECUTOR_DOCKER_IMAGE,
+      System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
+
+    runPySparkPiAndVerifyCompletion(
+      PYSPARK_PI_SUBMITTER_LOCAL_FILE_LOCATION)
+  }
+
+  test("Run PySpark Job on file from CONTAINER with spark.jar defined") {
+    assume(testBackend.name == MINIKUBE_TEST_BACKEND)
+
+    sparkConf.setJars(Seq(CONTAINER_LOCAL_HELPER_JAR_PATH))
+    sparkConf.set(DRIVER_DOCKER_IMAGE,
+      System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
+    sparkConf.set(EXECUTOR_DOCKER_IMAGE,
+      System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
+
+    runPySparkPiAndVerifyCompletion(
+      PYSPARK_PI_CONTAINER_LOCAL_FILE_LOCATION)
+  }
 
   test("Simple submission test with the resource staging server.") {
     assume(testBackend.name == MINIKUBE_TEST_BACKEND)
