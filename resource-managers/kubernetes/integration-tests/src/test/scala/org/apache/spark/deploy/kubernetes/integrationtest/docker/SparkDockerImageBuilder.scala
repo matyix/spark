@@ -70,10 +70,11 @@ private[spark] class SparkDockerImageBuilder(private val dockerEnv: Map[String, 
     // Building Python distribution environment
     val pythonExec = sys.env.get("PYSPARK_DRIVER_PYTHON")
       .orElse(sys.env.get("PYSPARK_PYTHON"))
-      .getOrElse("python")
+      .getOrElse("/usr/bin/python")
     val builder = new ProcessBuilder(
       Seq(pythonExec, "setup.py", "sdist").asJava)
     builder.directory(new java.io.File(s"$DOCKER_BUILD_PATH/python"))
+    builder.redirectErrorStream(true) // Ugly but needed for stdout and stderr to synchronize
     val process = builder.start()
     new RedirectThread(process.getInputStream, System.out, "redirect output").start()
     val exitCode = process.waitFor()
