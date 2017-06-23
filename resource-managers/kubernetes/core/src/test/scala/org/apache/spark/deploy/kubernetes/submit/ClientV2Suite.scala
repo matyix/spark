@@ -542,8 +542,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
     val envs = driverContainer.getEnv.asScala.map(env => (env.getName, env.getValue))
     val expectedBasicEnvs = Map(
       ENV_PYSPARK_PRIMARY -> RESOLVED_PYSPARK_PRIMARY_FILE,
-      ENV_PYSPARK_FILES -> RESOLVED_PYSPARK_FILES.mkString(","),
-      ENV_DRIVER_ARGS -> (RESOLVED_PYSPARK_FILES :+ "500").mkString(",")
+      ENV_PYSPARK_FILES -> RESOLVED_PYSPARK_FILES.mkString(",")
     )
     expectedBasicEnvs.toSet.subsetOf(envs.toSet)
   }
