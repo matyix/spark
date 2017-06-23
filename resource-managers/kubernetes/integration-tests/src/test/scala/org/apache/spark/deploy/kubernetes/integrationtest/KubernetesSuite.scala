@@ -76,10 +76,11 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
     assume(testBackend.name == MINIKUBE_TEST_BACKEND)
 
     launchStagingServer(SSLOptions(), None)
-    sparkConf.set(DRIVER_DOCKER_IMAGE,
-      System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
-    sparkConf.set(EXECUTOR_DOCKER_IMAGE,
-      System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
+    sparkConf
+      .set(DRIVER_DOCKER_IMAGE,
+        System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
+      .set(EXECUTOR_DOCKER_IMAGE,
+        System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
 
     runPySparkPiAndVerifyCompletion(
       PYSPARK_PI_SUBMITTER_LOCAL_FILE_LOCATION)
@@ -89,9 +90,10 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
     assume(testBackend.name == MINIKUBE_TEST_BACKEND)
 
     sparkConf.setJars(Seq(CONTAINER_LOCAL_HELPER_JAR_PATH))
-    sparkConf.set(DRIVER_DOCKER_IMAGE,
+    sparkConf
+      .set(DRIVER_DOCKER_IMAGE,
       System.getProperty("spark.docker.test.driverImage", "spark-driver-py:latest"))
-    sparkConf.set(EXECUTOR_DOCKER_IMAGE,
+      .set(EXECUTOR_DOCKER_IMAGE,
       System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
 
     runPySparkPiAndVerifyCompletion(

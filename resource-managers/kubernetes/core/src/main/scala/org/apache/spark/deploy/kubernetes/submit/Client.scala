@@ -48,13 +48,10 @@ private[spark] class Client(
     kubernetesResourceNamePrefix: String,
     kubernetesAppId: String,
     mainAppResource: String,
-    isPython: Boolean,
+    pythonResource: Option[PythonSubmissionResources],
     mainClass: String,
     sparkConf: SparkConf,
     appArgs: Array[String],
-    sparkJars: Seq[String],
-    sparkFiles: Seq[String],
-    pySparkFiles: List[String],
     waitForAppCompletion: Boolean,
     kubernetesClient: KubernetesClient,
     initContainerComponentsProvider: DriverInitContainerComponentsProvider,
@@ -84,16 +81,10 @@ private[spark] class Client(
     org.apache.spark.internal.config.DRIVER_JAVA_OPTIONS)
 
   def run(): Unit = {
-    validateNoDuplicateFileNames(sparkJars)
-    validateNoDuplicateFileNames(sparkFiles)
-    if (isPython) {validateNoDuplicateFileNames(pySparkFiles)}
-    val arguments = if (isPython) pySparkFiles match {
-      case Nil => appArgs
-      case a::b => a match {
-        case _ if a==mainAppResource && b==Nil => appArgs
-        case _ => appArgs.drop(1)
-      }
-    } else appArgs
+    val arguments = pythonResource match {
+      case Some(p) => p.arguments
+      case None => appArgs
+    }
     val driverCustomLabels = ConfigurationUtils.combinePrefixedKeyValuePairsWithDeprecatedConf(
       sparkConf,
       KUBERNETES_DRIVER_LABEL_PREFIX,
@@ -187,8 +178,10 @@ private[spark] class Client(
     val resolvedSparkJars = containerLocalizedFilesResolver.resolveSubmittedSparkJars()
     val resolvedSparkFiles = containerLocalizedFilesResolver.resolveSubmittedSparkFiles()
     val resolvedPySparkFiles = containerLocalizedFilesResolver.resolveSubmittedPySparkFiles()
-    val resolvedPrimaryPySparkResource = if (!isPython) ""
-     else { containerLocalizedFilesResolver.resolvePrimaryResourceFile() }
+    val resolvedPrimaryPySparkResource = pythonResource match {
+      case Some(p) => p.primarySparkResource(containerLocalizedFilesResolver)
+      case None => ""
+    }
     val executorInitContainerConfiguration = initContainerComponentsProvider
         .provideExecutorInitContainerConfiguration()
     val sparkConfWithExecutorInit = executorInitContainerConfiguration
@@ -228,17 +221,15 @@ private[spark] class Client(
           .endEnv()
         .endContainer()
       .endSpec()
-    val resolvedDriverPod = if (!isPython) {
-      resolvedDriverPodBuilder.build()
-    } else {
-      initContainerComponentsProvider
-        .provideDriverPodFileMounter()
-        .addPySparkFiles(
-          resolvedPrimaryPySparkResource,
-          resolvedPySparkFiles.mkString(","),
-          driverContainer.getName,
-          resolvedDriverPodBuilder)
-        .build()
+    val resolvedDriverPod = pythonResource match {
+      case Some(p) => p.driverPod(
+        initContainerComponentsProvider,
+        resolvedPrimaryPySparkResource,
+        resolvedPySparkFiles.mkString(","),
+        driverContainer.getName,
+        resolvedDriverPodBuilder
+      )
+      case None => resolvedDriverPodBuilder.build()
     }
     Utils.tryWithResource(
         kubernetesClient
@@ -276,17 +267,6 @@ private[spark] class Client(
       }
     }
   }
-
-  private def validateNoDuplicateFileNames(allFiles: Seq[String]): Unit = {
-    val fileNamesToUris = allFiles.map { file =>
-      (new File(Utils.resolveURI(file).getPath).getName, file)
-    }
-    fileNamesToUris.groupBy(_._1).foreach {
-      case (fileName, urisWithFileName) =>
-        require(urisWithFileName.size == 1, "Cannot add multiple files with the same name, but" +
-          s" file name $fileName is shared by all of these URIs: $urisWithFileName")
-    }
-  }
 }
 
 private[spark] object Client {
@@ -303,12 +283,19 @@ private[spark] object Client {
       mainClass: String,
       appArgs: Array[String]): Unit = {
     val isPython = mainAppResource.endsWith(".py")
+    val pythonResource: Option[PythonSubmissionResources] =
+      if (isPython) {
+        Option(new PythonSubmissionResources(mainAppResource, appArgs))
+      } else {
+        None
+      }
     // Since you might need jars for SQL UDFs in PySpark
-    def sparkJarFilter() : Seq[String] = isPython match {
-      case true => Seq.empty[String]
-      case false => Option(mainAppResource)
-        .filterNot(_ == SparkLauncher.NO_RESOURCE)
-        .toSeq
+    def sparkJarFilter() : Seq[String] = pythonResource match {
+      case Some(p) => p.sparkJars
+      case None =>
+        Option(mainAppResource)
+          .filterNot(_ == SparkLauncher.NO_RESOURCE)
+          .toSeq
     }
     val sparkJars = sparkConf.getOption("spark.jars")
       .map(_.split(","))
@@ -317,11 +304,13 @@ private[spark] object Client {
     val sparkFiles = sparkConf.getOption("spark.files")
       .map(_.split(","))
       .getOrElse(Array.empty[String])
-    val pySparkFiles: Array[String] = if (isPython) {
-      Option(appArgs(0)) match {
-        case None => Array(mainAppResource)
-        case Some(a) => mainAppResource +: a.split(",") }
-      } else { Array.empty[String] }
+    val pySparkFiles: Array[String] = pythonResource match {
+      case Some(p) => p.pySparkFiles
+      case None => Array.empty[String]
+    }
+    validateNoDuplicateFileNames(sparkJars)
+    validateNoDuplicateFileNames(sparkFiles)
+    if (pythonResource.isDefined) {validateNoDuplicateFileNames(pySparkFiles)}
     val appName = sparkConf.getOption("spark.app.name").getOrElse("spark")
     // The resource name prefix is derived from the application name, making it easy to connect the
     // names of the Kubernetes resources from e.g. Kubectl or the Kubernetes dashboard to the
@@ -362,18 +351,25 @@ private[spark] object Client {
           kubernetesResourceNamePrefix,
           kubernetesAppId,
           mainAppResource,
-          isPython,
+          pythonResource,
           mainClass,
           sparkConf,
           appArgs,
-          sparkJars,
-          sparkFiles,
-          pySparkFiles.toList,
           waitForAppCompletion,
           kubernetesClient,
           initContainerComponentsProvider,
           kubernetesCredentialsMounterProvider,
           loggingPodStatusWatcher).run()
+    }
+  }
+  private def validateNoDuplicateFileNames(allFiles: Seq[String]): Unit = {
+    val fileNamesToUris = allFiles.map { file =>
+      (new File(Utils.resolveURI(file).getPath).getName, file)
+    }
+    fileNamesToUris.groupBy(_._1).foreach {
+      case (fileName, urisWithFileName) =>
+        require(urisWithFileName.size == 1, "Cannot add multiple files with the same name, but" +
+          s" file name $fileName is shared by all of these URIs: $urisWithFileName")
     }
   }
 }

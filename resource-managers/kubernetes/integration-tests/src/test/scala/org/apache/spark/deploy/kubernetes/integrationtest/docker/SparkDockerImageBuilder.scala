@@ -16,19 +16,24 @@
  */
 package org.apache.spark.deploy.kubernetes.integrationtest.docker
 
+import java.io.File
 import java.net.URI
 import java.nio.file.Paths
+
+import scala.collection.JavaConverters._
 
 import com.spotify.docker.client.{DefaultDockerClient, DockerCertificates, LoggingBuildHandler}
 import org.apache.http.client.utils.URIBuilder
 import org.scalatest.concurrent.{Eventually, PatienceConfiguration}
 import org.scalatest.time.{Minutes, Seconds, Span}
-import scala.collection.JavaConverters._
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.util.RedirectThread
 
 
-private[spark] class SparkDockerImageBuilder(private val dockerEnv: Map[String, String]) {
+
+private[spark] class SparkDockerImageBuilder
+  (private val dockerEnv: Map[String, String]) extends Logging{
 
   private val DOCKER_BUILD_PATH = Paths.get("target", "docker")
   // Dockerfile paths must be relative to the build path.
@@ -73,15 +78,13 @@ private[spark] class SparkDockerImageBuilder(private val dockerEnv: Map[String, 
       .getOrElse("/usr/bin/python")
     val builder = new ProcessBuilder(
       Seq(pythonExec, "setup.py", "sdist").asJava)
-    builder.directory(new java.io.File(s"$DOCKER_BUILD_PATH/python"))
+    builder.directory(new File(DOCKER_BUILD_PATH.toFile, "python"))
     builder.redirectErrorStream(true) // Ugly but needed for stdout and stderr to synchronize
     val process = builder.start()
     new RedirectThread(process.getInputStream, System.out, "redirect output").start()
     val exitCode = process.waitFor()
     if (exitCode != 0) {
-      // scalastyle:off println
-      println(s"exitCode: $exitCode")
-      // scalastyle:on println
+      logInfo(s"exitCode: $exitCode")
     }
     buildImage("spark-base", BASE_DOCKER_FILE)
     buildImage("spark-driver", DRIVER_DOCKER_FILE)
