@@ -64,6 +64,7 @@ private[spark] class Client(
 
   // CPU settings
   private val driverCpuCores = sparkConf.getOption("spark.driver.cores").getOrElse("1")
+  private val driverLimitCores = sparkConf.getOption(KUBERNETES_DRIVER_LIMIT_CORES.key)
 
   // Memory settings
   private val driverMemoryMb = sparkConf.get(org.apache.spark.internal.config.DRIVER_MEMORY)
@@ -140,7 +141,6 @@ private[spark] class Client(
         .endEnv()
       .withNewResources()
         .addToRequests("cpu", driverCpuQuantity)
-        .addToLimits("cpu", driverCpuQuantity)
         .addToRequests("memory", driverMemoryQuantity)
         .addToLimits("memory", driverMemoryLimitQuantity)
         .endResources()
@@ -157,24 +157,33 @@ private[spark] class Client(
         .addToContainers(driverContainer)
         .endSpec()
 
-    val maybeSubmittedDependencyUploader = initContainerComponentsProvider
-        .provideInitContainerSubmittedDependencyUploader(allDriverLabels)
-    val maybeSubmittedResourceIdentifiers = maybeSubmittedDependencyUploader.map { uploader =>
+    driverLimitCores.map {
+      limitCores =>
+        val driverCpuLimitQuantity = new QuantityBuilder(false)
+          .withAmount(limitCores)
+          .build()
+        basePod
+          .editSpec()
+            .editFirstContainer()
+              .editResources
+                .addToLimits("cpu", driverCpuLimitQuantity)
+              .endResources()
+            .endContainer()
+          .endSpec()
+    }
+
+    val maybeSubmittedResourceIdentifiers = initContainerComponentsProvider
+      .provideInitContainerSubmittedDependencyUploader(allDriverLabels)
+      .map { uploader =>
       SubmittedResources(uploader.uploadJars(), uploader.uploadFiles())
     }
-    val maybeSecretBuilder = initContainerComponentsProvider
-        .provideSubmittedDependenciesSecretBuilder(
-            maybeSubmittedResourceIdentifiers.map(_.secrets()))
-    val maybeSubmittedDependenciesSecret = maybeSecretBuilder.map(_.build())
-    val initContainerConfigMap = initContainerComponentsProvider
-        .provideInitContainerConfigMapBuilder(maybeSubmittedResourceIdentifiers.map(_.ids()))
-        .build()
-    val podWithInitContainer = initContainerComponentsProvider
-        .provideInitContainerBootstrap()
-        .bootstrapInitContainerAndVolumes(driverContainer.getName, basePod)
+    val maybeSubmittedDependenciesSecret = initContainerComponentsProvider
+      .provideSubmittedDependenciesSecretBuilder(
+        maybeSubmittedResourceIdentifiers.map(_.secrets()))
+      .map(_.build())
 
     val containerLocalizedFilesResolver = initContainerComponentsProvider
-        .provideContainerLocalizedFilesResolver(mainAppResource)
+      .provideContainerLocalizedFilesResolver(mainAppResource)
     val resolvedSparkJars = containerLocalizedFilesResolver.resolveSubmittedSparkJars()
     val resolvedSparkFiles = containerLocalizedFilesResolver.resolveSubmittedSparkFiles()
     val resolvedPySparkFiles = containerLocalizedFilesResolver.resolveSubmittedPySparkFiles()
@@ -182,10 +191,19 @@ private[spark] class Client(
       case Some(p) => p.primarySparkResource(containerLocalizedFilesResolver)
       case None => ""
     }
-    val executorInitContainerConfiguration = initContainerComponentsProvider
-        .provideExecutorInitContainerConfiguration()
-    val sparkConfWithExecutorInit = executorInitContainerConfiguration
-        .configureSparkConfForExecutorInitContainer(sparkConf)
+
+    val initContainerBundler = initContainerComponentsProvider
+      .provideInitContainerBundle(maybeSubmittedResourceIdentifiers.map(_.ids()),
+        resolvedSparkJars ++ resolvedSparkFiles, mainAppResource)
+
+    val podWithInitContainer = initContainerBundler.map(
+      _.sparkPodInitContainerBootstrap
+        .bootstrapInitContainerAndVolumes(driverContainer.getName, basePod))
+      .getOrElse(basePod)
+    val sparkConfWithExecutorInit = initContainerBundler.map(
+      _.executorInitContainerConfiguration
+        .configureSparkConfForExecutorInitContainer(sparkConf))
+      .getOrElse(sparkConf)
     val credentialsMounter = kubernetesCredentialsMounterProvider
         .getDriverPodKubernetesCredentialsMounter()
     val credentialsSecret = credentialsMounter.createCredentialsSecret()
@@ -238,7 +256,8 @@ private[spark] class Client(
             .watch(loggingPodStatusWatcher)) { _ =>
       val createdDriverPod = kubernetesClient.pods().create(resolvedDriverPod)
       try {
-        val driverOwnedResources = Seq(initContainerConfigMap) ++
+        val driverOwnedResources = initContainerBundler.map(
+          _.sparkInitContainerConfigMap).toSeq ++
           maybeSubmittedDependenciesSecret.toSeq ++
           credentialsSecret.toSeq
         val driverPodOwnerReference = new OwnerReferenceBuilder()
