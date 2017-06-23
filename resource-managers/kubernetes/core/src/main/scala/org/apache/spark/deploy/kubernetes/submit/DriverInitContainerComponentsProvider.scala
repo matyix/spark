@@ -42,7 +42,7 @@ private[spark] trait DriverInitContainerComponentsProvider {
   def provideInitContainerBootstrap(): SparkPodInitContainerBootstrap
   def provideDriverPodFileMounter(): DriverPodKubernetesFileMounter
   def provideInitContainerBundle(maybeSubmittedResourceIds: Option[SubmittedResourceIds],
-      uris: Iterable[String], mainAppResource: String): Option[InitContainerBundle]
+      uris: Iterable[String]): Option[InitContainerBundle]
 }
 
 private[spark] class DriverInitContainerComponentsProviderImpl(
@@ -211,10 +211,10 @@ private[spark] class DriverInitContainerComponentsProviderImpl(
   }
   override def provideInitContainerBundle(
       maybeSubmittedResourceIds: Option[SubmittedResourceIds],
-      uris: Iterable[String], mainAppResource: String): Option[InitContainerBundle] = {
-    val containerLocalizedFilesResolver = provideContainerLocalizedFilesResolver(mainAppResource)
-    // Bypass init-containers if `spark.jars` and `spark.files` is empty or only has `local://` URIs
-    if (KubernetesFileUtils.getNonContainerLocalFiles(uris).nonEmpty) {
+      uris: Iterable[String]): Option[InitContainerBundle] = {
+    // Bypass init-containers if `spark.jars` and `spark.files` and '--py-rilfes'
+    // is empty or only has `local://` URIs
+    if ((KubernetesFileUtils.getNonContainerLocalFiles(uris) ++ pySparkSubmitted).nonEmpty) {
       Some(InitContainerBundle(provideInitContainerConfigMap(maybeSubmittedResourceIds),
         provideInitContainerBootstrap(),
         provideExecutorInitContainerConfiguration()))

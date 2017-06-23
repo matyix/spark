@@ -285,7 +285,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
         .thenReturn(Some(submittedDependenciesSecretBuilder))
     when(initContainerComponentsProvider.provideInitContainerBundle(mockitoEq(
       Option(SUBMITTED_RESOURCES.ids())),
-      mockitoEq(RESOLVED_SPARK_JARS ++ RESOLVED_SPARK_FILES), any[String]))
+      mockitoEq(RESOLVED_SPARK_JARS ++ RESOLVED_SPARK_FILES)))
         .thenReturn(Option(InitContainerBundle(INIT_CONTAINER_CONFIG_MAP,
           initContainerBootstrap, executorInitContainerConfiguration)))
     runAndVerifyDriverPodHasCorrectProperties()
@@ -403,7 +403,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
       .provideSubmittedDependenciesSecretBuilder(None))
       .thenReturn(None)
     when(initContainerComponentsProvider.provideInitContainerBundle(mockitoEq(None),
-      mockitoEq(RESOLVED_SPARK_JARS ++ RESOLVED_SPARK_FILES), any[String]))
+      mockitoEq(RESOLVED_SPARK_JARS ++ RESOLVED_SPARK_FILES)))
         .thenReturn(Some(InitContainerBundle(INIT_CONTAINER_CONFIG_MAP,
           initContainerBootstrap, executorInitContainerConfiguration)))
   }
@@ -465,7 +465,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
 
   private def runAndVerifyDriverPodHasCorrectPySparkProperties(): Unit = {
     when(initContainerComponentsProvider.provideInitContainerBundle(
-      any[Option[SubmittedResourceIds]], any[Iterable[String]], any[String]))
+      any[Option[SubmittedResourceIds]], any[Iterable[String]]))
       .thenReturn(Some(InitContainerBundle(INIT_CONTAINER_CONFIG_MAP,
         initContainerBootstrap, executorInitContainerConfiguration)))
     runAndVerifyPySparkPodMatchesPredicate { p =>

@@ -194,7 +194,7 @@ private[spark] class Client(
 
     val initContainerBundler = initContainerComponentsProvider
       .provideInitContainerBundle(maybeSubmittedResourceIdentifiers.map(_.ids()),
-        resolvedSparkJars ++ resolvedSparkFiles, mainAppResource)
+        resolvedSparkJars ++ resolvedSparkFiles)
 
     val podWithInitContainer = initContainerBundler.map(
       _.sparkPodInitContainerBootstrap
@@ -305,9 +305,7 @@ private[spark] object Client {
     val pythonResource: Option[PythonSubmissionResources] =
       if (isPython) {
         Option(new PythonSubmissionResources(mainAppResource, appArgs))
-      } else {
-        None
-      }
+      } else None
     // Since you might need jars for SQL UDFs in PySpark
     def sparkJarFilter() : Seq[String] = pythonResource match {
       case Some(p) => p.sparkJars
