@@ -25,7 +25,7 @@ private[spark] trait PythonSubmissionResources {
   def primaryPySparkResource(containerLocalizedFilesResolver: ContainerLocalizedFilesResolver)
     : String
   def driverPod(
-    initContainerComponentsProvider: DriverInitContainerComponentsProvider,
+    driverPodFileMounter: DriverPodKubernetesFileMounter,
     resolvedPrimaryPySparkResource: String,
     resolvedPySparkFiles: String,
     driverContainerName: String,
@@ -59,13 +59,12 @@ private[spark] class PythonSubmissionResourcesImpl(
       containerLocalizedFilesResolver.resolvePrimaryResourceFile()
 
   override def driverPod(
-    initContainerComponentsProvider: DriverInitContainerComponentsProvider,
+    driverPodFileMounter: DriverPodKubernetesFileMounter,
     resolvedPrimaryPySparkResource: String,
     resolvedPySparkFiles: String,
     driverContainerName: String,
     driverPodBuilder: PodBuilder) : Pod = {
-      initContainerComponentsProvider
-        .provideDriverPodFileMounter()
+      driverPodFileMounter
         .addPySparkFiles(
           resolvedPrimaryPySparkResource,
           resolvedPySparkFiles,

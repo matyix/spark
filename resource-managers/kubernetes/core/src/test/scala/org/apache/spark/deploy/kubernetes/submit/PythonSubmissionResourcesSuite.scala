@@ -75,7 +75,7 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
     .withNewSpec()
       .addToContainers(driverContainer)
     .endSpec()
-  private val driverInitcontainer = new DriverInitContainerComponentsProviderImpl(
+  private val driverFileMounter = new DriverInitContainerComponentsProviderImpl(
     new SparkConf(true).set(KUBERNETES_NAMESPACE, NAMESPACE),
     "kubeResourceName",
     "namespace",
@@ -83,8 +83,8 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
     SPARK_FILES,
     PYSPARK_PRIMARY_FILE +: PYSPARK_FILES,
     SSLOptions()
-  )
-  private val lessDriverInitcontainer = new DriverInitContainerComponentsProviderImpl(
+  ).provideDriverPodFileMounter()
+  private val lessDriverFileMounter = new DriverInitContainerComponentsProviderImpl(
     new SparkConf(true).set(KUBERNETES_NAMESPACE, NAMESPACE),
     "kubeResourceName",
     "namespace",
@@ -92,7 +92,7 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
     SPARK_FILES,
     Array(PYSPARK_PRIMARY_FILE),
     SSLOptions()
-  )
+  ).provideDriverPodFileMounter()
 
   test("Test with --py-files included") {
     assert(pyFilesResource.sparkJars === Seq.empty[String])
@@ -101,7 +101,7 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
     assert(pyFilesResource.primaryPySparkResource(localizedFilesResolver) ===
       RESOLVED_PYSPARK_PRIMARY_FILE)
     val driverPod: Pod = pyFilesResource.driverPod(
-      driverInitcontainer,
+      driverFileMounter,
       RESOLVED_PYSPARK_PRIMARY_FILE,
       RESOLVED_PYSPARK_FILES.mkString(","),
       DRIVER_CONTAINER_NAME,
@@ -119,7 +119,7 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
     assert(pyResource.primaryPySparkResource(lessLocalizedFilesResolver) ===
       RESOLVED_PYSPARK_PRIMARY_FILE)
     val driverPod: Pod = pyResource.driverPod(
-      lessDriverInitcontainer,
+      lessDriverFileMounter,
       RESOLVED_PYSPARK_PRIMARY_FILE,
       "",
       DRIVER_CONTAINER_NAME,

@@ -82,10 +82,7 @@ private[spark] class Client(
     org.apache.spark.internal.config.DRIVER_JAVA_OPTIONS)
 
   def run(): Unit = {
-    val arguments = pythonResource match {
-      case Some(p) => p.arguments
-      case None => appArgs
-    }
+    val arguments = (pythonResource map {p => p.arguments}).getOrElse(appArgs)
     val driverCustomLabels = ConfigurationUtils.combinePrefixedKeyValuePairsWithDeprecatedConf(
       sparkConf,
       KUBERNETES_DRIVER_LABEL_PREFIX,
@@ -187,11 +184,9 @@ private[spark] class Client(
     val resolvedSparkJars = containerLocalizedFilesResolver.resolveSubmittedSparkJars()
     val resolvedSparkFiles = containerLocalizedFilesResolver.resolveSubmittedSparkFiles()
     val resolvedPySparkFiles = containerLocalizedFilesResolver.resolveSubmittedPySparkFiles()
-    val resolvedPrimaryPySparkResource = pythonResource match {
-      case Some(p) => p.primaryPySparkResource(containerLocalizedFilesResolver)
-      case None => ""
-    }
-
+    val resolvedPrimaryPySparkResource = (pythonResource map {
+        p => p.primaryPySparkResource(containerLocalizedFilesResolver)
+      }).getOrElse("")
     val initContainerBundler = initContainerComponentsProvider
       .provideInitContainerBundle(maybeSubmittedResourceIdentifiers.map(_.ids()),
         resolvedSparkJars ++ resolvedSparkFiles)
@@ -239,16 +234,15 @@ private[spark] class Client(
           .endEnv()
         .endContainer()
       .endSpec()
-    val resolvedDriverPod = pythonResource match {
-      case Some(p) => p.driverPod(
-        initContainerComponentsProvider,
+    val driverPodFileMounter = initContainerComponentsProvider.provideDriverPodFileMounter()
+    val resolvedDriverPod = (pythonResource map {
+      p => p.driverPod(
+        driverPodFileMounter,
         resolvedPrimaryPySparkResource,
         resolvedPySparkFiles.mkString(","),
         driverContainer.getName,
         resolvedDriverPodBuilder
-      )
-      case None => resolvedDriverPodBuilder.build()
-    }
+      )}).getOrElse(resolvedDriverPodBuilder.build())
     Utils.tryWithResource(
         kubernetesClient
             .pods()
@@ -307,13 +301,11 @@ private[spark] object Client {
         Option(new PythonSubmissionResourcesImpl(mainAppResource, appArgs))
       } else None
     // Since you might need jars for SQL UDFs in PySpark
-    def sparkJarFilter() : Seq[String] = pythonResource match {
-      case Some(p) => p.sparkJars
-      case None =>
+    def sparkJarFilter() : Seq[String] = (pythonResource map {
+      p => p.sparkJars}).getOrElse(
         Option(mainAppResource)
           .filterNot(_ == SparkLauncher.NO_RESOURCE)
-          .toSeq
-    }
+          .toSeq)
     val sparkJars = sparkConf.getOption("spark.jars")
       .map(_.split(","))
       .getOrElse(Array.empty[String]) ++ sparkJarFilter()
