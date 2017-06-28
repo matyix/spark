@@ -18,13 +18,17 @@ package org.apache.spark.deploy.kubernetes.submit
 
 import org.apache.spark.{SSLOptions, SparkConf, SparkFunSuite}
 import org.apache.spark.deploy.kubernetes.config._
+
 import scala.collection.JavaConverters._
-
 import io.fabric8.kubernetes.api.model.{ContainerBuilder, Pod, PodBuilder}
+import org.mockito.{Mock, MockitoAnnotations}
+import org.mockito.Mockito.when
+import org.scalatest.BeforeAndAfter
 
 
 
-private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
+
+private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite with BeforeAndAfter {
   private val PYSPARK_FILES = Seq(
     "hdfs://localhost:9000/app/files/file1.py",
     "file:///app/files/file2.py",
@@ -45,25 +49,6 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
   private val pyResource = new PythonSubmissionResourcesImpl(
     PYSPARK_PRIMARY_FILE, Array(null, "500")
   )
-  private val SPARK_FILES = Seq.empty[String]
-  private val SPARK_JARS = Seq.empty[String]
-  private val JARS_DOWNLOAD_PATH = "/var/data/spark-jars"
-  private val FILES_DOWNLOAD_PATH = "/var/data/spark-files"
-  private val localizedFilesResolver = new ContainerLocalizedFilesResolverImpl(
-    SPARK_JARS,
-    SPARK_FILES,
-    PYSPARK_FILES,
-    PYSPARK_PRIMARY_FILE,
-    JARS_DOWNLOAD_PATH,
-    FILES_DOWNLOAD_PATH)
-  private val lessLocalizedFilesResolver = new ContainerLocalizedFilesResolverImpl(
-    SPARK_JARS,
-    SPARK_FILES,
-    Seq.empty[String],
-    PYSPARK_PRIMARY_FILE,
-    JARS_DOWNLOAD_PATH,
-    FILES_DOWNLOAD_PATH)
-  private val NAMESPACE = "example_pyspark"
   private val DRIVER_CONTAINER_NAME = "pyspark_container"
   private val driverContainer = new ContainerBuilder()
     .withName(DRIVER_CONTAINER_NAME)
@@ -75,33 +60,27 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
     .withNewSpec()
       .addToContainers(driverContainer)
     .endSpec()
-  private val driverFileMounter = new DriverInitContainerComponentsProviderImpl(
-    new SparkConf(true).set(KUBERNETES_NAMESPACE, NAMESPACE),
-    "kubeResourceName",
-    "namespace",
-    SPARK_JARS,
-    SPARK_FILES,
-    PYSPARK_PRIMARY_FILE +: PYSPARK_FILES,
-    SSLOptions()
-  ).provideDriverPodFileMounter()
-  private val lessDriverFileMounter = new DriverInitContainerComponentsProviderImpl(
-    new SparkConf(true).set(KUBERNETES_NAMESPACE, NAMESPACE),
-    "kubeResourceName",
-    "namespace",
-    SPARK_JARS,
-    SPARK_FILES,
-    Array(PYSPARK_PRIMARY_FILE),
-    SSLOptions()
-  ).provideDriverPodFileMounter()
 
+  @Mock
+  private var driverInitContainer: DriverInitContainerComponentsProviderImpl = _
+  @Mock
+  private var localizedFileResolver: ContainerLocalizedFilesResolverImpl = _
+  before {
+    MockitoAnnotations.initMocks(this)
+    when(driverInitContainer.provideDriverPodFileMounter()).thenReturn(
+      new DriverPodKubernetesFileMounterImpl()
+    )
+    when(localizedFileResolver.resolvePrimaryResourceFile()).thenReturn(
+      RESOLVED_PYSPARK_PRIMARY_FILE)
+  }
   test("Test with --py-files included") {
     assert(pyFilesResource.sparkJars === Seq.empty[String])
     assert(pyFilesResource.pySparkFiles ===
       PYSPARK_PRIMARY_FILE +: PYSPARK_FILES)
-    assert(pyFilesResource.primaryPySparkResource(localizedFilesResolver) ===
+    assert(pyFilesResource.primaryPySparkResource(localizedFileResolver) ===
       RESOLVED_PYSPARK_PRIMARY_FILE)
-    val driverPod: Pod = pyFilesResource.driverPod(
-      driverFileMounter,
+    val driverPod: Pod = pyFilesResource.driverPodWithPySparkEnvs(
+      driverInitContainer.provideDriverPodFileMounter(),
       RESOLVED_PYSPARK_PRIMARY_FILE,
       RESOLVED_PYSPARK_FILES.mkString(","),
       DRIVER_CONTAINER_NAME,
@@ -116,10 +95,10 @@ private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite {
   test("Test without --py-files") {
     assert(pyResource.sparkJars === Seq.empty[String])
     assert(pyResource.pySparkFiles === Array(PYSPARK_PRIMARY_FILE))
-    assert(pyResource.primaryPySparkResource(lessLocalizedFilesResolver) ===
+    assert(pyResource.primaryPySparkResource(localizedFileResolver) ===
       RESOLVED_PYSPARK_PRIMARY_FILE)
-    val driverPod: Pod = pyResource.driverPod(
-      lessDriverFileMounter,
+    val driverPod: Pod = pyResource.driverPodWithPySparkEnvs(
+      driverInitContainer.provideDriverPodFileMounter(),
       RESOLVED_PYSPARK_PRIMARY_FILE,
       "",
       DRIVER_CONTAINER_NAME,

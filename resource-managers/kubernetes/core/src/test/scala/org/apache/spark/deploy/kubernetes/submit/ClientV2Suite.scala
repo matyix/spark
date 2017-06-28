@@ -213,18 +213,10 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
       any())).thenAnswer( new Answer[PodBuilder] {
         override def answer(invocation: InvocationOnMock) : PodBuilder = {
           invocation.getArgumentAt(3, classOf[PodBuilder])
-          .editSpec()
-            .editMatchingContainer(new ContainerNameEqualityPredicate(
-              invocation.getArgumentAt(2, classOf[String])))
-              .addNewEnv()
-                .withName("pyspark")
-                .withValue("true")
-              .endEnv()
-            .endContainer()
-          .endSpec()
           .editMetadata()
             .withUid(DRIVER_POD_UID)
             .withName(s"$APP_RESOURCE_PREFIX-driver")
+            .addToLabels("pyspark-test", "true")
           .endMetadata()
           .withKind(DRIVER_POD_KIND)
           .withApiVersion(DRIVER_POD_API_VERSION)
@@ -510,12 +502,12 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
   }
 
   private def containerHasCorrectPySparkEnvs(pod: Pod): Boolean = {
-    val driverContainer = pod.getSpec.getContainers.asScala.head
-    val envs = driverContainer.getEnv.asScala.map(env => (env.getName, env.getValue))
-    val expectedBasicEnvs = Map(
-      "pyspark" -> "true"
-    )
-    expectedBasicEnvs.toSet.subsetOf(envs.toSet)
+    val driverPodLabels =
+      pod.getMetadata.getLabels.asScala.map(env => (env._1.toString, env._2.toString))
+    val expectedBasicLabels = Map(
+      "pyspark-test" -> "true",
+      "spark-role" -> "driver")
+    expectedBasicLabels.toSet.subsetOf(driverPodLabels.toSet)
   }
 
   private def containerHasCorrectBasicContainerConfiguration(pod: Pod): Boolean = {

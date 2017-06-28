@@ -236,7 +236,7 @@ private[spark] class Client(
       .endSpec()
     val driverPodFileMounter = initContainerComponentsProvider.provideDriverPodFileMounter()
     val resolvedDriverPod = (pythonResource map {
-      p => p.driverPod(
+      p => p.driverPodWithPySparkEnvs(
         driverPodFileMounter,
         resolvedPrimaryPySparkResource,
         resolvedPySparkFiles.mkString(","),
