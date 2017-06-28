@@ -37,7 +37,7 @@ private[spark] class PythonSubmissionResourcesImpl(
   private val appArgs: Array[String] ) extends PythonSubmissionResources {
 
   private val pyFiles: Array[String] = {
-    (Option(appArgs(0)) map (a => mainAppResource +: a.split(",")))
+    Option(appArgs(0)).map(a => mainAppResource +: a.split(","))
       .getOrElse(Array(mainAppResource))
   }
 

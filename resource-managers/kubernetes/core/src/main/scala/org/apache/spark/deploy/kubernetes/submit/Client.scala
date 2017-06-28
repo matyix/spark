@@ -184,9 +184,9 @@ private[spark] class Client(
     val resolvedSparkJars = containerLocalizedFilesResolver.resolveSubmittedSparkJars()
     val resolvedSparkFiles = containerLocalizedFilesResolver.resolveSubmittedSparkFiles()
     val resolvedPySparkFiles = containerLocalizedFilesResolver.resolveSubmittedPySparkFiles()
-    val resolvedPrimaryPySparkResource = (pythonResource map {
+    val resolvedPrimaryPySparkResource = pythonResource.map {
         p => p.primaryPySparkResource(containerLocalizedFilesResolver)
-      }).getOrElse("")
+      }.getOrElse("")
     val initContainerBundler = initContainerComponentsProvider
       .provideInitContainerBundle(maybeSubmittedResourceIdentifiers.map(_.ids()),
         resolvedSparkJars ++ resolvedSparkFiles)
@@ -235,14 +235,14 @@ private[spark] class Client(
         .endContainer()
       .endSpec()
     val driverPodFileMounter = initContainerComponentsProvider.provideDriverPodFileMounter()
-    val resolvedDriverPod = (pythonResource map {
+    val resolvedDriverPod = pythonResource.map {
       p => p.driverPodWithPySparkEnvs(
         driverPodFileMounter,
         resolvedPrimaryPySparkResource,
         resolvedPySparkFiles.mkString(","),
         driverContainer.getName,
         resolvedDriverPodBuilder
-      )}).getOrElse(resolvedDriverPodBuilder.build())
+      )}.getOrElse(resolvedDriverPodBuilder.build())
     Utils.tryWithResource(
         kubernetesClient
             .pods()
@@ -301,8 +301,8 @@ private[spark] object Client {
         Option(new PythonSubmissionResourcesImpl(mainAppResource, appArgs))
       } else None
     // Since you might need jars for SQL UDFs in PySpark
-    def sparkJarFilter() : Seq[String] = (pythonResource map {
-      p => p.sparkJars}).getOrElse(
+    def sparkJarFilter() : Seq[String] =
+      pythonResource.map { p => p.sparkJars}.getOrElse(
         Option(mainAppResource)
           .filterNot(_ == SparkLauncher.NO_RESOURCE)
           .toSeq)
@@ -313,10 +313,10 @@ private[spark] object Client {
     val sparkFiles = sparkConf.getOption("spark.files")
       .map(_.split(","))
       .getOrElse(Array.empty[String])
-    val pySparkFilesOption = pythonResource map {p => p.pySparkFiles}
+    val pySparkFilesOption = pythonResource.map {p => p.pySparkFiles}
     validateNoDuplicateFileNames(sparkJars)
     validateNoDuplicateFileNames(sparkFiles)
-    pySparkFilesOption foreach {b => validateNoDuplicateFileNames(b)}
+    pySparkFilesOption.foreach {b => validateNoDuplicateFileNames(b)}
     val pySparkFiles = pySparkFilesOption.getOrElse(Array.empty[String])
     val appName = sparkConf.getOption("spark.app.name").getOrElse("spark")
     // The resource name prefix is derived from the application name, making it easy to connect the
