@@ -158,8 +158,6 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
   private type ResourceListOps = NamespaceListVisitFromServerGetDeleteRecreateWaitApplicable[
       HasMetadata, java.lang.Boolean]
   @Mock
-  private var pythonSubmissionResources : PythonSubmissionResources = _
-  @Mock
   private var resourceListOps: ResourceListOps = _
   @Mock
   private var credentialsMounterProvider: DriverPodKubernetesCredentialsMounterProvider = _
@@ -189,8 +187,8 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
             .endMetadata()
         }
       })
-    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver(any[String]))
-      .thenReturn(containerLocalizedFilesResolver)
+    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver(
+      any[String])).thenReturn(containerLocalizedFilesResolver)
     when(initContainerComponentsProvider.provideDriverPodFileMounter())
         .thenReturn(fileMounter)
     when(submittedDependenciesSecretBuilder.build())
@@ -208,27 +206,6 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
       }
     })
     when(podOps.withName(s"$APP_RESOURCE_PREFIX-driver")).thenReturn(namedPodResource)
-    when(pythonSubmissionResources.sparkJars).thenReturn(Seq.empty[String])
-    when(pythonSubmissionResources.primarySparkResource(any()))
-      .thenReturn(RESOLVED_PYSPARK_PRIMARY_FILE)
-    when(pythonSubmissionResources.pySparkFiles).thenReturn(PYSPARK_FILES.toArray)
-    when(pythonSubmissionResources.arguments).thenReturn(Array(PYSPARK_FILES.mkString(","), "500"))
-    when(pythonSubmissionResources.driverPod(
-      any[DriverInitContainerComponentsProvider],
-      mockitoEq(RESOLVED_PYSPARK_PRIMARY_FILE),
-      mockitoEq(RESOLVED_PYSPARK_FILES.mkString(",")),
-      any[String],
-      any[PodBuilder])).thenAnswer( new Answer[Pod] {
-        override def answer(invocation: InvocationOnMock) : Pod = {
-          invocation.getArgumentAt(0, classOf[DriverInitContainerComponentsProvider])
-           .provideDriverPodFileMounter().addPySparkFiles(
-            invocation.getArgumentAt(1, classOf[String]),
-            invocation.getArgumentAt(2, classOf[String]),
-            invocation.getArgumentAt(3, classOf[String]),
-            invocation.getArgumentAt(4, classOf[PodBuilder])
-          ).build()
-        }
-      })
     when(fileMounter.addPySparkFiles(
       mockitoEq(RESOLVED_PYSPARK_PRIMARY_FILE),
       mockitoEq(RESOLVED_PYSPARK_FILES.mkString(",")),
@@ -240,12 +217,8 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
             .editMatchingContainer(new ContainerNameEqualityPredicate(
               invocation.getArgumentAt(2, classOf[String])))
               .addNewEnv()
-                .withName(ENV_PYSPARK_PRIMARY)
-                .withValue(invocation.getArgumentAt(0, classOf[String]))
-              .endEnv()
-              .addNewEnv()
-                .withName(ENV_PYSPARK_FILES)
-                .withValue(invocation.getArgumentAt(1, classOf[String]))
+                .withName("pyspark")
+                .withValue("true")
               .endEnv()
             .endContainer()
           .endSpec()
@@ -464,6 +437,8 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
   }
 
   private def runAndVerifyDriverPodHasCorrectPySparkProperties(): Unit = {
+    when(initContainerComponentsProvider.provideContainerLocalizedFilesResolver(
+      mockitoEq(PYSPARK_PRIMARY_FILE))).thenReturn(containerLocalizedFilesResolver)
     when(initContainerComponentsProvider.provideInitContainerBundle(
       any[Option[SubmittedResourceIds]], any[Iterable[String]]))
       .thenReturn(Some(InitContainerBundle(INIT_CONTAINER_CONFIG_MAP,
@@ -538,8 +513,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
     val driverContainer = pod.getSpec.getContainers.asScala.head
     val envs = driverContainer.getEnv.asScala.map(env => (env.getName, env.getValue))
     val expectedBasicEnvs = Map(
-      ENV_PYSPARK_PRIMARY -> RESOLVED_PYSPARK_PRIMARY_FILE,
-      ENV_PYSPARK_FILES -> RESOLVED_PYSPARK_FILES.mkString(",")
+      "pyspark" -> "true"
     )
     expectedBasicEnvs.toSet.subsetOf(envs.toSet)
   }
@@ -567,7 +541,7 @@ class ClientV2Suite extends SparkFunSuite with BeforeAndAfter {
       APP_RESOURCE_PREFIX,
       APP_ID,
       PYSPARK_PRIMARY_FILE,
-      Option(pythonSubmissionResources),
+      Option(new PythonSubmissionResourcesImpl(PYSPARK_PRIMARY_FILE, PYSPARK_APP_ARGS)),
       MAIN_CLASS,
       SPARK_CONF,
       PYSPARK_APP_ARGS,

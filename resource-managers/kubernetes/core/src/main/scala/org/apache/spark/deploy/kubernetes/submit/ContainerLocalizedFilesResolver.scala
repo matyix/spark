@@ -34,8 +34,7 @@ private[spark] class ContainerLocalizedFilesResolverImpl(
     pySparkFiles: Seq[String],
     primaryPyFile: String,
     jarsDownloadPath: String,
-    filesDownloadPath: String
-    ) extends ContainerLocalizedFilesResolver {
+    filesDownloadPath: String ) extends ContainerLocalizedFilesResolver {
 
 
   override def resolveSubmittedAndRemoteSparkJars(): Seq[String] = {
@@ -68,10 +67,7 @@ private[spark] class ContainerLocalizedFilesResolverImpl(
   }
 
   override def resolvePrimaryResourceFile(): String = {
-    Option(primaryPyFile) match {
-      case None => ""
-      case Some(p) => resolveFile(p, filesDownloadPath)
-    }
+    Option(primaryPyFile).map(p => resolveFile(p, filesDownloadPath)).getOrElse("")
   }
 
   private def resolveFile(file: String, downloadPath: String) = {

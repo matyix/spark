@@ -18,20 +18,34 @@ package org.apache.spark.deploy.kubernetes.submit
 
 import io.fabric8.kubernetes.api.model.{Pod, PodBuilder}
 
-class PythonSubmissionResources(
-  private val mainAppResource: String,
-  private val appArgs: Array[String] ) {
+private[spark] trait PythonSubmissionResources {
+  def sparkJars: Seq[String]
+  def pySparkFiles: Array[String]
+  def arguments: Array[String]
+  def primaryPySparkResource(containerLocalizedFilesResolver: ContainerLocalizedFilesResolver)
+    : String
+  def driverPod(
+    initContainerComponentsProvider: DriverInitContainerComponentsProvider,
+    resolvedPrimaryPySparkResource: String,
+    resolvedPySparkFiles: String,
+    driverContainerName: String,
+    driverPodBuilder: PodBuilder) : Pod
+}
 
-  private val pyFiles: Array[String] = Option(appArgs(0)) match {
-    case None => Array(mainAppResource)
-    case Some(a) => mainAppResource +: a.split(",")
+private[spark] class PythonSubmissionResourcesImpl(
+  private val mainAppResource: String,
+  private val appArgs: Array[String] ) extends PythonSubmissionResources {
+
+  private val pyFiles: Array[String] = {
+    (Option(appArgs(0)) map (a => mainAppResource +: a.split(",")))
+      .getOrElse(Array(mainAppResource))
   }
 
-  def sparkJars: Seq[String] = Seq.empty[String]
+  override def sparkJars: Seq[String] = Seq.empty[String]
 
-  def pySparkFiles: Array[String] = pyFiles
+  override def pySparkFiles: Array[String] = pyFiles
 
-  def arguments: Array[String] =
+  override def arguments: Array[String] = {
     pyFiles.toList match {
       case Nil => appArgs
       case a :: b => a match {
@@ -39,10 +53,12 @@ class PythonSubmissionResources(
         case _ => appArgs.drop(1)
       }
     }
-  def primarySparkResource (containerLocalizedFilesResolver: ContainerLocalizedFilesResolver)
-    : String = containerLocalizedFilesResolver.resolvePrimaryResourceFile()
+  }
+  override def primaryPySparkResource (
+    containerLocalizedFilesResolver: ContainerLocalizedFilesResolver) : String =
+      containerLocalizedFilesResolver.resolvePrimaryResourceFile()
 
-  def driverPod(
+  override def driverPod(
     initContainerComponentsProvider: DriverInitContainerComponentsProvider,
     resolvedPrimaryPySparkResource: String,
     resolvedPySparkFiles: String,
