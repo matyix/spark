@@ -33,7 +33,7 @@ import org.apache.spark.util.Utils
 private[spark] trait DriverInitContainerComponentsProvider {
 
   def provideContainerLocalizedFilesResolver(
-      mainAppResource: String) : ContainerLocalizedFilesResolver
+      mainAppResource: String): ContainerLocalizedFilesResolver
   def provideInitContainerSubmittedDependencyUploader(
       driverPodLabels: Map[String, String]): Option[SubmittedDependencyUploader]
   def provideSubmittedDependenciesSecretBuilder(
