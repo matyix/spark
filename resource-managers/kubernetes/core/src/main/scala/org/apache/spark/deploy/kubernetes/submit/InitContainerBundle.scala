@@ -14,11 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.deploy.kubernetes
+package org.apache.spark.deploy.kubernetes.submit
 
-import io.fabric8.kubernetes.api.model.{Container, Pod}
+import io.fabric8.kubernetes.api.model.ConfigMap
 
-private[spark] case class PodWithDetachedInitContainer(
-    pod: Pod,
-    initContainer: Container,
-    mainContainer: Container)
+import org.apache.spark.deploy.kubernetes.{SparkPodInitContainerBootstrap}
+
+case class InitContainerBundle(
+    sparkInitContainerConfigMap: ConfigMap,
+    sparkPodInitContainerBootstrap: SparkPodInitContainerBootstrap,
+    executorInitContainerConfiguration: ExecutorInitContainerConfiguration)

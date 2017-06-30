@@ -34,7 +34,7 @@ import org.apache.spark.deploy.kubernetes.config._
 import org.apache.spark.deploy.kubernetes.integrationtest.backend.IntegrationTestBackendFactory
 import org.apache.spark.deploy.kubernetes.integrationtest.backend.minikube.Minikube
 import org.apache.spark.deploy.kubernetes.integrationtest.constants.MINIKUBE_TEST_BACKEND
-import org.apache.spark.deploy.kubernetes.submit.{Client, ClientArguments, JavaMainAppResource, KeyAndCertPem, MainAppResource, PythonMainAppResource}
+import org.apache.spark.deploy.kubernetes.submit.{Client, KeyAndCertPem}
 import org.apache.spark.launcher.SparkLauncher
 import org.apache.spark.util.Utils
 
@@ -82,7 +82,8 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
       .set(EXECUTOR_DOCKER_IMAGE,
         System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
 
-    runPySparkPiAndVerifyCompletion(PYSPARK_PI_SUBMITTER_LOCAL_FILE_LOCATION, Seq.empty[String])
+    runPySparkPiAndVerifyCompletion(
+      PYSPARK_PI_SUBMITTER_LOCAL_FILE_LOCATION)
   }
 
   test("Run PySpark Job on file from CONTAINER with spark.jar defined") {
@@ -95,7 +96,8 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
       .set(EXECUTOR_DOCKER_IMAGE,
       System.getProperty("spark.docker.test.executorImage", "spark-executor-py:latest"))
 
-    runPySparkPiAndVerifyCompletion(PYSPARK_PI_CONTAINER_LOCAL_FILE_LOCATION, Seq.empty[String])
+    runPySparkPiAndVerifyCompletion(
+      PYSPARK_PI_CONTAINER_LOCAL_FILE_LOCATION)
   }
 
   test("Simple submission test with the resource staging server.") {
@@ -152,11 +154,10 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
     sparkConf.set("spark.kubernetes.shuffle.namespace", kubernetesTestComponents.namespace)
     sparkConf.set("spark.app.name", "group-by-test")
     runSparkApplicationAndVerifyCompletion(
-        JavaMainAppResource(SUBMITTER_LOCAL_MAIN_APP_RESOURCE),
+        SUBMITTER_LOCAL_MAIN_APP_RESOURCE,
         GROUP_BY_MAIN_CLASS,
         "The Result is",
-        Array.empty[String],
-        Seq.empty[String])
+        Array.empty[String])
   }
 
   test("Use remote resources without the resource staging server.") {
@@ -216,11 +217,10 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
     launchStagingServer(SSLOptions(), None)
     sparkConf.set("spark.files", testExistenceFile.getAbsolutePath)
     runSparkApplicationAndVerifyCompletion(
-        JavaMainAppResource(SUBMITTER_LOCAL_MAIN_APP_RESOURCE),
+        SUBMITTER_LOCAL_MAIN_APP_RESOURCE,
         FILE_EXISTENCE_MAIN_CLASS,
         s"File found at /opt/spark/${testExistenceFile.getName} with correct contents.",
-        Array(testExistenceFile.getName, TEST_EXISTENCE_FILE_CONTENTS),
-        Seq.empty[String])
+        Array(testExistenceFile.getName, TEST_EXISTENCE_FILE_CONTENTS))
   }
 
   test("Use a very long application name.") {
@@ -248,35 +248,26 @@ private[spark] class KubernetesSuite extends SparkFunSuite with BeforeAndAfter {
 
   private def runSparkPiAndVerifyCompletion(appResource: String): Unit = {
     runSparkApplicationAndVerifyCompletion(
-        JavaMainAppResource(appResource),
-        SPARK_PI_MAIN_CLASS,
-        "Pi is roughly 3",
-        Array.empty[String],
-        Seq.empty[String])
+        appResource, SPARK_PI_MAIN_CLASS, "Pi is roughly 3", Array.empty[String])
   }
 
   private def runPySparkPiAndVerifyCompletion(
-      appResource: String, otherPyFiles: Seq[String]): Unit = {
+    appResource: String): Unit = {
     runSparkApplicationAndVerifyCompletion(
-      PythonMainAppResource(appResource),
-      PYSPARK_PI_MAIN_CLASS,
-      "Pi is roughly 3",
-      Array("5"),
-      otherPyFiles)
+      appResource, PYSPARK_PI_MAIN_CLASS, "Pi is roughly 3",
+      Array(null, "5"))
   }
 
   private def runSparkApplicationAndVerifyCompletion(
-      appResource: MainAppResource,
+      appResource: String,
       mainClass: String,
       expectedLogOnCompletion: String,
-      appArgs: Array[String],
-      otherPyFiles: Seq[String]): Unit = {
-    val clientArguments = ClientArguments(
-      mainAppResource = appResource,
+      appArgs: Array[String]): Unit = {
+    Client.run(
+      sparkConf = sparkConf,
+      appArgs = appArgs,
       mainClass = mainClass,
-      driverArgs = appArgs,
-      otherPyFiles = otherPyFiles)
-    Client.run(sparkConf, clientArguments)
+      mainAppResource = appResource)
     val driverPod = kubernetesTestComponents.kubernetesClient
       .pods()
       .withLabel("spark-app-locator", APP_LOCATOR_LABEL)

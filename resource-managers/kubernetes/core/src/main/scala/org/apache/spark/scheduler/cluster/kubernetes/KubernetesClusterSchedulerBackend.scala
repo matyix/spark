@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.{AtomicInteger, AtomicLong, AtomicReference}
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import io.fabric8.kubernetes.api.model.{ContainerBuilder, ContainerPortBuilder, EnvVarBuilder, EnvVarSourceBuilder, Pod, PodBuilder, QuantityBuilder}
+import io.fabric8.kubernetes.api.model.{ContainerPortBuilder, EnvVarBuilder, EnvVarSourceBuilder, Pod, PodBuilder, QuantityBuilder}
 import io.fabric8.kubernetes.client.{KubernetesClient, KubernetesClientException, Watcher}
 import io.fabric8.kubernetes.client.Watcher.Action
 import org.apache.commons.io.FilenameUtils
@@ -32,10 +32,9 @@ import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
 
 import org.apache.spark.{SparkContext, SparkEnv, SparkException}
-import org.apache.spark.deploy.kubernetes.{ConfigurationUtils, InitContainerResourceStagingServerSecretPlugin, PodWithDetachedInitContainer, SparkPodInitContainerBootstrap}
+import org.apache.spark.deploy.kubernetes.{ConfigurationUtils, SparkPodInitContainerBootstrap}
 import org.apache.spark.deploy.kubernetes.config._
 import org.apache.spark.deploy.kubernetes.constants._
-import org.apache.spark.deploy.kubernetes.submit.InitContainerUtil
 import org.apache.spark.network.netty.SparkTransportConf
 import org.apache.spark.network.shuffle.kubernetes.KubernetesExternalShuffleClient
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpointAddress, RpcEnv}
@@ -48,7 +47,6 @@ private[spark] class KubernetesClusterSchedulerBackend(
     scheduler: TaskSchedulerImpl,
     val sc: SparkContext,
     executorInitContainerBootstrap: Option[SparkPodInitContainerBootstrap],
-    executorMountInitContainerSecretPlugin: Option[InitContainerResourceStagingServerSecretPlugin],
     kubernetesClient: KubernetesClient)
   extends CoarseGrainedSchedulerBackend(scheduler, sc.env.rpcEnv) {
 
@@ -321,8 +319,8 @@ private[spark] class KubernetesClusterSchedulerBackend(
     nodeToLocalTaskCount.toMap[String, Int]
   }
 
-  private def addNodeAffinityAnnotationIfUseful(
-      baseExecutorPod: Pod, nodeToTaskCount: Map[String, Int]): Pod = {
+  private def addNodeAffinityAnnotationIfUseful(basePodBuilder: PodBuilder,
+                                                nodeToTaskCount: Map[String, Int]): PodBuilder = {
     def scaleToRange(value: Int, baseMin: Double, baseMax: Double,
                      rangeMin: Double, rangeMax: Double): Int =
       (((rangeMax - rangeMin) * (value - baseMin) / (baseMax - baseMin)) + rangeMin).toInt
@@ -343,12 +341,11 @@ private[spark] class KubernetesClusterSchedulerBackend(
         )))
       // TODO: Use non-annotation syntax when we switch to K8s version 1.6.
       logDebug(s"Adding nodeAffinity as annotation $nodeAffinityJson")
-      new PodBuilder(baseExecutorPod).editMetadata()
+      basePodBuilder.editMetadata()
         .addToAnnotations(ANNOTATION_EXECUTOR_NODE_AFFINITY, nodeAffinityJson)
         .endMetadata()
-        .build()
     } else {
-      baseExecutorPod
+      basePodBuilder
     }
   }
 
@@ -419,22 +416,7 @@ private[spark] class KubernetesClusterSchedulerBackend(
           .build()
       })
 
-    val executorContainer = new ContainerBuilder()
-      .withName(s"executor")
-      .withImage(executorDockerImage)
-      .withImagePullPolicy(dockerImagePullPolicy)
-      .withNewResources()
-        .addToRequests("memory", executorMemoryQuantity)
-        .addToLimits("memory", executorMemoryLimitQuantity)
-        .addToRequests("cpu", executorCpuQuantity)
-      .endResources()
-      .addAllToEnv(requiredEnv.asJava)
-      .addToEnv(executorExtraClasspathEnv.toSeq: _*)
-      .withPorts(requiredPorts.asJava)
-      .build()
-
-
-    val executorPod = new PodBuilder()
+    val basePodBuilder = new PodBuilder()
       .withNewMetadata()
         .withName(name)
         .withLabels(resolvedExecutorLabels.asJava)
@@ -450,77 +432,69 @@ private[spark] class KubernetesClusterSchedulerBackend(
       .endMetadata()
       .withNewSpec()
         .withHostname(hostname)
+        .addNewContainer()
+          .withName(s"executor")
+          .withImage(executorDockerImage)
+          .withImagePullPolicy(dockerImagePullPolicy)
+          .withNewResources()
+            .addToRequests("memory", executorMemoryQuantity)
+            .addToLimits("memory", executorMemoryLimitQuantity)
+            .addToRequests("cpu", executorCpuQuantity)
+          .endResources()
+          .addAllToEnv(requiredEnv.asJava)
+          .addToEnv(executorExtraClasspathEnv.toSeq: _*)
+          .withPorts(requiredPorts.asJava)
+        .endContainer()
       .endSpec()
-      .build()
 
-    val containerWithExecutorLimitCores = executorLimitCores.map {
+    executorLimitCores.map {
       limitCores =>
         val executorCpuLimitQuantity = new QuantityBuilder(false)
           .withAmount(limitCores)
           .build()
-        new ContainerBuilder(executorContainer)
-          .editResources()
-            .addToLimits("cpu", executorCpuLimitQuantity)
-            .endResources()
-          .build()
-    }.getOrElse(executorContainer)
-
-    val withMaybeShuffleConfigExecutorContainer = shuffleServiceConfig.map { config =>
-      config.shuffleDirs.foldLeft(containerWithExecutorLimitCores) { (container, dir) =>
-        new ContainerBuilder(container)
-          .addNewVolumeMount()
-            .withName(FilenameUtils.getBaseName(dir))
-            .withMountPath(dir)
-            .endVolumeMount()
-          .build()
-      }
-    }.getOrElse(containerWithExecutorLimitCores)
-    val withMaybeShuffleConfigPod = shuffleServiceConfig.map { config =>
-      config.shuffleDirs.foldLeft(executorPod) { (builder, dir) =>
-        new PodBuilder(builder)
+        basePodBuilder
           .editSpec()
-            .addNewVolume()
-              .withName(FilenameUtils.getBaseName(dir))
-              .withNewHostPath()
-                .withPath(dir)
+            .editFirstContainer()
+              .editResources
+                .addToLimits("cpu", executorCpuLimitQuantity)
+              .endResources()
+            .endContainer()
+          .endSpec()
+    }
+
+    val withMaybeShuffleConfigPodBuilder = shuffleServiceConfig
+      .map { config =>
+        config.shuffleDirs.foldLeft(basePodBuilder) { (builder, dir) =>
+          builder
+            .editSpec()
+              .addNewVolume()
+                .withName(FilenameUtils.getBaseName(dir))
+                .withNewHostPath()
+                  .withPath(dir)
                 .endHostPath()
               .endVolume()
+              .editFirstContainer()
+                .addNewVolumeMount()
+                  .withName(FilenameUtils.getBaseName(dir))
+                  .withMountPath(dir)
+                .endVolumeMount()
+              .endContainer()
             .endSpec()
-          .build()
-      }
-    }.getOrElse(executorPod)
-    val (executorPodWithInitContainer, initBootstrappedExecutorContainer) =
-        executorInitContainerBootstrap.map { bootstrap =>
-          val podWithDetachedInitContainer = bootstrap.bootstrapInitContainerAndVolumes(
-              PodWithDetachedInitContainer(
-                  withMaybeShuffleConfigPod,
-                  new ContainerBuilder().build(),
-                  withMaybeShuffleConfigExecutorContainer))
+        }
+      }.getOrElse(basePodBuilder)
 
-          val resolvedInitContainer = executorMountInitContainerSecretPlugin.map { plugin =>
-            plugin.mountResourceStagingServerSecretIntoInitContainer(
-                podWithDetachedInitContainer.initContainer)
-          }.getOrElse(podWithDetachedInitContainer.initContainer)
+    val executorInitContainerPodBuilder = executorInitContainerBootstrap.map {
+        bootstrap =>
+          bootstrap.bootstrapInitContainerAndVolumes(
+            "executor",
+            withMaybeShuffleConfigPodBuilder)
+      }.getOrElse(withMaybeShuffleConfigPodBuilder)
 
-          val podWithAttachedInitContainer = InitContainerUtil.appendInitContainer(
-              podWithDetachedInitContainer.pod, resolvedInitContainer)
+    val resolvedExecutorPodBuilder = addNodeAffinityAnnotationIfUseful(
+      executorInitContainerPodBuilder, nodeToLocalTaskCount)
 
-          val resolvedPodWithMountedSecret = executorMountInitContainerSecretPlugin.map { plugin =>
-            plugin.addResourceStagingServerSecretVolumeToPod(podWithAttachedInitContainer)
-          }.getOrElse(podWithAttachedInitContainer)
-
-          (resolvedPodWithMountedSecret, podWithDetachedInitContainer.mainContainer)
-      }.getOrElse((withMaybeShuffleConfigPod, withMaybeShuffleConfigExecutorContainer))
-
-    val executorPodWithNodeAffinity = addNodeAffinityAnnotationIfUseful(
-        executorPodWithInitContainer, nodeToLocalTaskCount)
-    val resolvedExecutorPod = new PodBuilder(executorPodWithNodeAffinity)
-      .editSpec()
-        .addToContainers(initBootstrappedExecutorContainer)
-        .endSpec()
-      .build()
     try {
-      (executorId, kubernetesClient.pods.create(resolvedExecutorPod))
+      (executorId, kubernetesClient.pods.create(resolvedExecutorPodBuilder.build()))
     } catch {
       case throwable: Throwable =>
         logError("Failed to allocate executor pod.", throwable)
@@ -632,11 +606,10 @@ private[spark] class KubernetesClusterSchedulerBackend(
     }
   }
 
-}
-case class ShuffleServiceConfig(
-    shuffleNamespace: String,
+  case class ShuffleServiceConfig(shuffleNamespace: String,
     shuffleLabels: Map[String, String],
     shuffleDirs: Seq[String])
+}
 
 private object KubernetesClusterSchedulerBackend {
   private val DEFAULT_STATIC_PORT = 10000

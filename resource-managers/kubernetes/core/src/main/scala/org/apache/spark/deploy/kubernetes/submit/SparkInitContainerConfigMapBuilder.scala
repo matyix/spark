@@ -14,23 +14,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.spark.deploy.kubernetes.submit.submitsteps.initcontainer
+package org.apache.spark.deploy.kubernetes.submit
 
-import org.apache.spark.deploy.kubernetes.{PodWithDetachedInitContainer, SparkPodInitContainerBootstrap}
+import io.fabric8.kubernetes.api.model.ConfigMap
+
 import org.apache.spark.deploy.kubernetes.config._
-import org.apache.spark.deploy.kubernetes.submit.KubernetesFileUtils
 
-private[spark] class BaseInitContainerStep(
+private[spark] trait SparkInitContainerConfigMapBuilder {
+  /**
+   * Construct a config map that an init-container should reference for fetching
+   * remote dependencies. The config map includes the remote jars and files to download,
+   * as well as details to fetch files from a resource staging server, if applicable.
+   */
+  def build(): ConfigMap
+}
+
+private[spark] class SparkInitContainerConfigMapBuilderImpl(
     sparkJars: Seq[String],
     sparkFiles: Seq[String],
     jarsDownloadPath: String,
     filesDownloadPath: String,
     configMapName: String,
     configMapKey: String,
-    podAndInitContainerBootstrap: SparkPodInitContainerBootstrap)
-  extends InitContainerStep {
+    submittedDependenciesPlugin: Option[SubmittedDependencyInitContainerConfigPlugin])
+    extends SparkInitContainerConfigMapBuilder {
 
-  override def prepareInitContainer(initContainerSpec: InitContainerSpec): InitContainerSpec = {
+  override def build(): ConfigMap = {
     val remoteJarsToDownload = KubernetesFileUtils.getOnlyRemoteFiles(sparkJars)
     val remoteFilesToDownload = KubernetesFileUtils.getOnlyRemoteFiles(sparkFiles)
     val remoteJarsConf = if (remoteJarsToDownload.nonEmpty) {
@@ -48,16 +57,12 @@ private[spark] class BaseInitContainerStep(
       INIT_CONTAINER_FILES_DOWNLOAD_LOCATION.key -> filesDownloadPath) ++
       remoteJarsConf ++
       remoteFilesConf
-    val bootstrappedPodAndInitContainer =
-        podAndInitContainerBootstrap.bootstrapInitContainerAndVolumes(
-             PodWithDetachedInitContainer(
-                  initContainerSpec.podToInitialize,
-                  initContainerSpec.initContainer,
-                  initContainerSpec.driverContainer))
-    initContainerSpec.copy(
-      initContainer = bootstrappedPodAndInitContainer.initContainer,
-      driverContainer = bootstrappedPodAndInitContainer.mainContainer,
-      podToInitialize = bootstrappedPodAndInitContainer.pod,
-      initContainerProperties = baseInitContainerConfig)
+    val submittedDependenciesConfig = submittedDependenciesPlugin.map { plugin =>
+      plugin.configurationsToFetchSubmittedDependencies()
+    }.toSeq.flatten.toMap
+    PropertiesConfigMapFromScalaMapBuilder.buildConfigMap(
+        configMapName,
+        configMapKey,
+        baseInitContainerConfig ++ submittedDependenciesConfig)
   }
 }

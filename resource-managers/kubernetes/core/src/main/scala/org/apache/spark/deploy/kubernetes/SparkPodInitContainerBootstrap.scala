@@ -19,11 +19,8 @@ package org.apache.spark.deploy.kubernetes
 import io.fabric8.kubernetes.api.model.{ContainerBuilder, EmptyDirVolumeSource, PodBuilder, VolumeMount, VolumeMountBuilder}
 
 import org.apache.spark.deploy.kubernetes.constants._
+import org.apache.spark.deploy.kubernetes.submit.{ContainerNameEqualityPredicate, InitContainerUtil}
 
-/**
- * This is separated out from the init-container steps API because this component can be reused to
- * set up the init-container for executors as well.
- */
 private[spark] trait SparkPodInitContainerBootstrap {
   /**
    * Bootstraps an init-container that downloads dependencies to be used by a main container.
@@ -31,13 +28,10 @@ private[spark] trait SparkPodInitContainerBootstrap {
    * by a ConfigMap that was installed by some other component; that is, the implementation
    * here makes no assumptions about how the init-container is specifically configured. For
    * example, this class is unaware if the init-container is fetching remote dependencies or if
-   * it is fetching dependencies from a resource staging server. Additionally, the container itself
-   * is not actually attached to the pod, but the init container is returned so it can be attached
-   * by InitContainerUtil after the caller has decided to make any changes to it.
+   * it is fetching dependencies from a resource staging server.
    */
   def bootstrapInitContainerAndVolumes(
-      originalPodWithUnattachedInitContainer: PodWithDetachedInitContainer)
-      : PodWithDetachedInitContainer
+      mainContainerName: String, originalPodSpec: PodBuilder): PodBuilder
 }
 
 private[spark] class SparkPodInitContainerBootstrapImpl(
@@ -47,12 +41,13 @@ private[spark] class SparkPodInitContainerBootstrapImpl(
     filesDownloadPath: String,
     downloadTimeoutMinutes: Long,
     initContainerConfigMapName: String,
-    initContainerConfigMapKey: String)
+    initContainerConfigMapKey: String,
+    resourceStagingServerSecretPlugin: Option[InitContainerResourceStagingServerSecretPlugin])
   extends SparkPodInitContainerBootstrap {
 
   override def bootstrapInitContainerAndVolumes(
-      originalPodWithUnattachedInitContainer: PodWithDetachedInitContainer)
-      : PodWithDetachedInitContainer = {
+      mainContainerName: String,
+      originalPodSpec: PodBuilder): PodBuilder = {
     val sharedVolumeMounts = Seq[VolumeMount](
       new VolumeMountBuilder()
         .withName(INIT_CONTAINER_DOWNLOAD_JARS_VOLUME_NAME)
@@ -63,7 +58,7 @@ private[spark] class SparkPodInitContainerBootstrapImpl(
         .withMountPath(filesDownloadPath)
         .build())
 
-    val initContainer = new ContainerBuilder(originalPodWithUnattachedInitContainer.initContainer)
+    val initContainer = new ContainerBuilder()
       .withName(s"spark-init")
       .withImage(initContainerImage)
       .withImagePullPolicy(dockerImagePullPolicy)
@@ -73,8 +68,11 @@ private[spark] class SparkPodInitContainerBootstrapImpl(
         .endVolumeMount()
       .addToVolumeMounts(sharedVolumeMounts: _*)
       .addToArgs(INIT_CONTAINER_PROPERTIES_FILE_PATH)
-      .build()
-    val podWithBasicVolumes = new PodBuilder(originalPodWithUnattachedInitContainer.pod)
+    val resolvedInitContainer = resourceStagingServerSecretPlugin.map { plugin =>
+      plugin.mountResourceStagingServerSecretIntoInitContainer(initContainer)
+    }.getOrElse(initContainer).build()
+    val podWithBasicVolumes = InitContainerUtil.appendInitContainer(
+        originalPodSpec, resolvedInitContainer)
       .editSpec()
         .addNewVolume()
           .withName(INIT_CONTAINER_PROPERTIES_FILE_VOLUME)
@@ -94,20 +92,17 @@ private[spark] class SparkPodInitContainerBootstrapImpl(
           .withName(INIT_CONTAINER_DOWNLOAD_FILES_VOLUME_NAME)
           .withEmptyDir(new EmptyDirVolumeSource())
           .endVolume()
+        .editMatchingContainer(new ContainerNameEqualityPredicate(mainContainerName))
+          .addToVolumeMounts(sharedVolumeMounts: _*)
+          .addNewEnv()
+            .withName(ENV_MOUNTED_FILES_DIR)
+            .withValue(filesDownloadPath)
+            .endEnv()
+          .endContainer()
         .endSpec()
-      .build()
-    val mainContainerWithMountedFiles = new ContainerBuilder(
-      originalPodWithUnattachedInitContainer.mainContainer)
-        .addToVolumeMounts(sharedVolumeMounts: _*)
-        .addNewEnv()
-          .withName(ENV_MOUNTED_FILES_DIR)
-          .withValue(filesDownloadPath)
-          .endEnv()
-        .build()
-    PodWithDetachedInitContainer(
-      podWithBasicVolumes,
-      initContainer,
-      mainContainerWithMountedFiles)
+    resourceStagingServerSecretPlugin.map { plugin =>
+      plugin.addResourceStagingServerSecretVolumeToPod(podWithBasicVolumes)
+    }.getOrElse(podWithBasicVolumes)
   }
 
 }
