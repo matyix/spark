@@ -301,8 +301,8 @@ private[spark] object Client {
         Option(new PythonSubmissionResourcesImpl(mainAppResource, appArgs))
       } else None
     // Since you might need jars for SQL UDFs in PySpark
-    def sparkJarFilter() : Seq[String] =
-      pythonResource.map { p => p.sparkJars}.getOrElse(
+    def sparkJarFilter(): Seq[String] =
+      pythonResource.map {p => p.sparkJars}.getOrElse(
         Option(mainAppResource)
           .filterNot(_ == SparkLauncher.NO_RESOURCE)
           .toSeq)

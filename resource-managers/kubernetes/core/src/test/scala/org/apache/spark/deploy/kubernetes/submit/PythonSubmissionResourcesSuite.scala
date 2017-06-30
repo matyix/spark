@@ -25,9 +25,6 @@ import org.mockito.{Mock, MockitoAnnotations}
 import org.mockito.Mockito.when
 import org.scalatest.BeforeAndAfter
 
-
-
-
 private[spark] class PythonSubmissionResourcesSuite extends SparkFunSuite with BeforeAndAfter {
   private val PYSPARK_FILES = Seq(
     "hdfs://localhost:9000/app/files/file1.py",
