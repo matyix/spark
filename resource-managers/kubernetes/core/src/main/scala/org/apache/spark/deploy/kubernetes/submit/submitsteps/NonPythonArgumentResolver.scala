@@ -16,41 +16,20 @@
  */
 package org.apache.spark.deploy.kubernetes.submit.submitsteps
 
-import org.apache.spark.internal.Logging
-
 import io.fabric8.kubernetes.api.model.ContainerBuilder
+
 import org.apache.spark.deploy.kubernetes.constants._
 import org.apache.spark.deploy.kubernetes.submit.KubernetesFileUtils
 
-
-private[spark] class PythonStep(
-    primaryPyFile: String,
-    otherPyFiles: Seq[String],
-    appArgs: Array[String],
-    filesDownloadPath: String) extends KubernetesSubmissionStep {
+private[spark] class NonPythonArgumentResolver(
+                                 appArgs: Array[String]) extends KubernetesSubmissionStep {
 
   override def prepareSubmission(driverSpec: KubernetesDriverSpec): KubernetesDriverSpec = {
-    val arguments : Array[String] = otherPyFiles.toList match {
-      case Nil => null +: appArgs
-      case a :: b => a match {
-        case _ if a == "" && b == Nil => null +: appArgs
-        case _ => appArgs
-      }
-    }
-    val withPythonPrimaryFileContainer = new ContainerBuilder(driverSpec.driverContainer)
-      .addNewEnv()
-        .withName(ENV_DRIVER_ARGS)
-        .withValue(arguments.mkString(" "))
-        .endEnv()
-      .addNewEnv()
-        .withName(ENV_PYSPARK_PRIMARY)
-        .withValue(KubernetesFileUtils.resolveFilePath(primaryPyFile, filesDownloadPath))
-        .endEnv()
-      .addNewEnv()
-        .withName(ENV_PYSPARK_FILES)
-        .withValue(
-            KubernetesFileUtils.resolveFilePaths(otherPyFiles, filesDownloadPath).mkString(","))
-        .endEnv()
-    driverSpec.copy(driverContainer = withPythonPrimaryFileContainer.build())
+    val withNonPythonArgumentsResolvedContainer = new ContainerBuilder(driverSpec.driverContainer)
+     .addNewEnv()
+       .withName(ENV_DRIVER_ARGS)
+       .withValue(appArgs.mkString(" "))
+      .endEnv()
+    driverSpec.copy(driverContainer = withNonPythonArgumentsResolvedContainer.build())
   }
 }
