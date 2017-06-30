@@ -20,7 +20,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.deploy.kubernetes.ConfigurationUtils
 import org.apache.spark.deploy.kubernetes.config._
 import org.apache.spark.deploy.kubernetes.constants._
-import org.apache.spark.deploy.kubernetes.submit.submitsteps._
+import org.apache.spark.deploy.kubernetes.submit.submitsteps.{BaseSubmissionStep, DependencyResolutionStep, DriverKubernetesCredentialsStep, InitContainerBootstrapStep, KubernetesSubmissionStep, PythonStep}
 import org.apache.spark.deploy.kubernetes.submit.submitsteps.initcontainer.InitContainerStepsOrchestrator
 import org.apache.spark.launcher.SparkLauncher
 import org.apache.spark.util.Utils
@@ -91,10 +91,10 @@ private[spark] class KubernetesSubmissionStepsOrchestrator(
         submissionSparkConf)
     val kubernetesCredentialsStep = new DriverKubernetesCredentialsStep(
         submissionSparkConf, kubernetesAppId)
-    val pythonResolverStep = mainAppResource match {
+    val pythonStep = mainAppResource match {
       case PythonMainAppResource(mainPyResource) =>
-        Option(new PythonStep(mainPyResource, additionalPythonFiles, appArgs, filesDownloadPath))
-      case _ => Option(new NonPythonArgumentResolver(appArgs))
+        Option(new PythonStep(mainPyResource, additionalPythonFiles, filesDownloadPath))
+      case _ => Option.empty[KubernetesSubmissionStep]
     }
     val initContainerBootstrapStep = if ((sparkJars ++ sparkFiles).exists { uri =>
       Option(Utils.resolveURI(uri).getScheme).getOrElse("file") != "local"
@@ -130,6 +130,6 @@ private[spark] class KubernetesSubmissionStepsOrchestrator(
       kubernetesCredentialsStep,
       dependencyResolutionStep) ++
       initContainerBootstrapStep.toSeq ++
-      pythonResolverStep.toSeq
+      pythonStep.toSeq
   }
 }

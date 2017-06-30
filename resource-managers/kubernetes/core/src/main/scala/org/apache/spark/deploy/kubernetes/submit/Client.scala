@@ -47,8 +47,8 @@ private[spark] object ClientArguments {
         mainAppResource = Some(PythonMainAppResource(mainPyFile))
       case Array("--primary-java-resource", primaryJavaResource: String) =>
         mainAppResource = Some(JavaMainAppResource(primaryJavaResource))
-      case Array("--main-class", m_class: String) =>
-        mainClass = Some(m_class)
+      case Array("--main-class", clazz: String) =>
+        mainClass = Some(clazz)
       case Array("--other-py-files", pyFiles: String) =>
         otherPyFiles = pyFiles.split(",")
       case Array("--arg", arg: String) =>
@@ -77,13 +77,7 @@ private[spark] class Client(
 
   private val driverJavaOptions = submissionSparkConf.get(
     org.apache.spark.internal.config.DRIVER_JAVA_OPTIONS)
-  /**
-    * Run command that initalizes a DriverSpec that will be updated
-    * after each KubernetesSubmissionStep in the sequence that is passed in.
-    * The final driver-spec will be used to build the Driver Container,
-    * Driver Pod, and Kubernetes Resources
-    *
-    */
+
   def run(): Unit = {
     var currentDriverSpec = new KubernetesDriverSpec(
       driverPod = new PodBuilder().build(),
@@ -152,8 +146,6 @@ private[spark] object Client {
     val appName = sparkConf.getOption("spark.app.name").getOrElse("spark")
     val kubernetesAppId = s"spark-${UUID.randomUUID().toString.replaceAll("-", "")}"
     val master = resolveK8sMaster(sparkConf.get("spark.master"))
-    // This orchestrator determines which steps are necessary to take to resolve varying
-    // client arguments that are passed in. Use cases include: Scala/Java and Python submission
     val submissionStepsOrchestrator = new KubernetesSubmissionStepsOrchestrator(
       namespace,
       kubernetesAppId,
@@ -185,13 +177,7 @@ private[spark] object Client {
         loggingPodStatusWatcher).run()
     }
   }
-  /**
-    * Entry point from SparkSubmit in spark-core
-    *
-    *
-    * @param args Array of strings that have interchanging values that will be
-    *             parsed by ClientArguments with the identifiers that preceed the values
-    */
+
   def main(args: Array[String]): Unit = {
     val parsedArguments = ClientArguments.fromCommandLineArgs(args)
     val sparkConf = new SparkConf()
