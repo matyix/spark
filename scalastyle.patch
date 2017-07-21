@@ -1,0 +1,24 @@
+diff --git a/core/src/main/scala/org/apache/spark/metrics/sink/PrometheusSink.scala b/core/src/main/scala/org/apache/spark/metrics/sink/PrometheusSink.scala
+index 877b53f..7f94c39 100644
+--- a/core/src/main/scala/org/apache/spark/metrics/sink/PrometheusSink.scala
++++ b/core/src/main/scala/org/apache/spark/metrics/sink/PrometheusSink.scala
+@@ -22,8 +22,9 @@ import java.util
+ import java.util.Properties
+ import java.util.concurrent.TimeUnit
+ 
+-import com.codahale.metrics._
++import scala.util.Try
+ 
++import com.codahale.metrics._
+ import io.prometheus.client.CollectorRegistry
+ import io.prometheus.client.dropwizard.DropwizardExports
+ import io.prometheus.client.exporter.PushGateway
+@@ -31,8 +32,6 @@ import io.prometheus.client.exporter.PushGateway
+ import org.apache.spark.SecurityManager
+ import org.apache.spark.metrics.MetricsSystem
+ 
+-import scala.util.Try
+-
+ private[spark] class PrometheusSink(val property: Properties, val registry: MetricRegistry,
+                                     securityMgr: SecurityManager) extends Sink {
+ 
